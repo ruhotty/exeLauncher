@@ -46,7 +46,7 @@ A bottle contains its own Windows C: drive, registry, and installed programs. Wh
 - DirectX shader compiler runtime (`d3dcompiler_47`).
 - Microsoft core fonts (`corefonts`).
 
-These components are installed separately in each new bottle. exeLauncher also downloads a compatible Homebrew cabextract binary, verifies its SHA-256 checksum, and keeps it inside its own Runtime folder. It does not require Homebrew to be installed on the Mac. Graphics translation layers are supplied by the selected MetalSharp Wine runtime. They must be selected as compatible graphics routes; exeLauncher does not yet automatically detect a game's Direct3D API or launch games.
+These components are installed separately in each new bottle. exeLauncher also downloads a compatible Homebrew cabextract binary, verifies its SHA-256 checksum, and keeps it inside its own Runtime folder. It does not require Homebrew to be installed on the Mac. Graphics translation layers are supplied by the selected MetalSharp Wine runtime. exeLauncher checks the imported executable for Direct3D DLL references and selects DXVK for Direct3D 8/9, VKD3D-Proton for Direct3D 12, or Mullion by default for Direct3D 10/11.
 
 Deleting a bottle permanently deletes everything installed inside it.
 
