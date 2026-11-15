@@ -200,7 +200,7 @@ enum WineRuntimeInstaller {
 
         let fileManager = FileManager.default
         let temporaryDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("exeLauncher-MetalSharp-Wine-\\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("exeLauncher-MetalSharp-Wine-\(UUID().uuidString)", isDirectory: true)
         let extractionDirectory = temporaryDirectory.appendingPathComponent("Extracted", isDirectory: true)
         try fileManager.createDirectory(at: extractionDirectory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: temporaryDirectory) }
@@ -516,7 +516,6 @@ enum BottleManager {
         process.arguments = ["-i"]
         var environment = ProcessInfo.processInfo.environment
         environment["WINEPREFIX"] = bottle.directoryURL.path
-        environment["WINEARCH"] = "win64"
         environment["WINEDEBUG"] = "-all"
         environment["WINELOADER"] = WineRuntime.executable(named: "wine", in: runtimeApp)?.path
         process.environment = environment
