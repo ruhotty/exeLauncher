@@ -41,7 +41,15 @@ Each bottle is a separate Wine prefix stored under:
 ~/Library/Application Support/exeLauncher/Bottles/
 ```
 
-A bottle contains its own Windows C: drive, registry, and installed programs. Deleting a bottle permanently deletes everything installed inside it.
+A bottle contains its own Windows C: drive, registry, and installed programs. When a new bottle is created, exeLauncher downloads the official Winetricks script and installs these common components into that bottle:
+
+- Microsoft Visual C++ 2015–2022 runtime (`vcrun2022`).
+- DirectX shader compiler runtime (`d3dcompiler_47`).
+- Microsoft core fonts (`corefonts`).
+
+These components are installed separately in each new bottle. Winetricks may require `cabextract` to be installed on the Mac. Graphics translation layers such as DXVK, DXMT and VKD3D-Proton are not installed automatically yet. They need compatible Wine/Vulkan configuration and must be selected as a graphics route rather than blindly mixed together.
+
+Deleting a bottle permanently deletes everything installed inside it.
 
 ## Windows Steam
 
