@@ -451,7 +451,8 @@ enum CabextractInstaller {
         }
 
         // Reinstall old Homebrew symlinks from earlier builds. Those links can
-        // point into a temporary Cellar path that no longer exists.        if existingType == .typeSymbolicLink {
+        // point into a temporary Cellar path that no longer exists.
+        if existingType == .typeSymbolicLink {
             try? FileManager.default.removeItem(at: installDirectory)
         }
 
@@ -501,7 +502,8 @@ enum CabextractInstaller {
         let archiveData = try Data(contentsOf: archiveURL)
         let actualSHA = SHA256.hash(data: archiveData).map { String(format: "%02x", $0) }.joined()
         guard actualSHA.caseInsensitiveCompare(expectedSHA) == .orderedSame else {
-            throw InstallerError.checksumMismatch        }
+            throw InstallerError.checksumMismatch
+        }
 
         let fileManager = FileManager.default
         let temporaryDirectory = fileManager.temporaryDirectory
@@ -1352,7 +1354,10 @@ struct LauncherView: View {
             defer { if hasAccess { sourceURL.stopAccessingSecurityScopedResource() } }
             try FileManager.default.createDirectory(at: GameStore.gamesDirectory, withIntermediateDirectories: true)
             let destination = GameStore.gamesDirectory.appendingPathComponent(sourceURL.lastPathComponent)
-            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
             let game = Game(name: sourceURL.deletingPathExtension().lastPathComponent, executablePath: destination.path)
             games.append(game)
             GameStore.save(games)
@@ -1777,7 +1782,7 @@ struct BottlesView: View {
         }
 
         isInstallingEXE = true
-        statusMessage = "Copying installer and preparing bottle '(bottle.name)'."
+        statusMessage = "Copying installer and preparing bottle '\(bottle.name)'."
         let hasSecurityScope = selectedURL.startAccessingSecurityScopedResource()
 
         Task {
@@ -1831,7 +1836,7 @@ struct BottlesView: View {
 
         let panel = NSOpenPanel()
         panel.title = "Choose the installed game's executable"
-        panel.message = "Select the game's main .exe inside the (bottle.name) bottle."
+        panel.message = "Select the game's main .exe inside the \(bottle.name) bottle."
         panel.prompt = "Add to Library"
         panel.directoryURL = driveC
         panel.canChooseFiles = true
@@ -1849,7 +1854,7 @@ struct BottlesView: View {
         var game = Game(
             name: executableURL.deletingPathExtension().lastPathComponent,
             executablePath: executableURL.path,
-            source: "Bottle: (bottle.name)"
+            source: "Bottle: \(bottle.name)"
         )
         game.bottleID = bottle.id
 
@@ -1860,7 +1865,7 @@ struct BottlesView: View {
             NotificationCenter.default.post(name: .exeLauncherGamesChanged, object: nil)
         }
 
-        statusMessage = "(game.name) is now in your Games Library and linked to bottle '(bottle.name)'."
+        statusMessage = "\(game.name) is now in your Games Library and linked to bottle '\(bottle.name)'."
     }
 
     private func deletePendingBottle() {
