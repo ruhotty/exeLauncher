@@ -790,6 +790,7 @@ enum BottleManager {
         process.standardOutput = Pipe()
 
         do {
+            ExeLauncherProcessRegistry.registerWinePrefix(prefix: bottle.directoryURL, runtimeApp: runtimeApp)
             try process.run()
             ExeLauncherProcessRegistry.register(process)
             process.waitUntilExit()
