@@ -95,9 +95,13 @@ enum BottleStore {
 }
 
 enum WineRuntime {
-    static let version = "11.16"
-    static let releaseURL = URL(string: "https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.16")!
+    static let version = "11.21"
+    static let releaseURL = URL(string: "https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.21")!
     static let preferenceKey = "SelectedWineAppPath"
+
+    static var installDirectory: URL {
+        GameStore.directory.appendingPathComponent("Runtime", isDirectory: true)
+    }
 
     static var selectedAppURL: URL? {
         guard let path = UserDefaults.standard.string(forKey: preferenceKey) else { return nil }
@@ -107,7 +111,7 @@ enum WineRuntime {
     static func chooseApp() -> URL? {
         let panel = NSOpenPanel()
         panel.title = "Select Wine Staging.app"
-        panel.message = "Choose the Wine .app bundle you installed from Gcenx's release."
+        panel.message = "Choose the complete Wine .app bundle."
         panel.prompt = "Select Wine"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -148,6 +152,154 @@ enum WineRuntime {
     static var winebootExecutable: URL? {
         guard let app = selectedAppURL else { return nil }
         return executable(named: "wineboot", in: app)
+    }
+}
+
+enum WineRuntimeInstaller {
+    private static let releaseAPI = URL(string: "https://api.github.com/repos/Gcenx/macOS_Wine_builds/releases/tags/11.21")!
+
+    static func install() async throws -> URL {
+        try checkRosetta()
+
+        var request = URLRequest(url: releaseAPI)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("exeLauncher", forHTTPHeaderField: "User-Agent")
+        let (releaseData, releaseResponse) = try await URLSession.shared.data(for: request)
+        guard let http = releaseResponse as? HTTPURLResponse,
+              (200...299).contains(http.statusCode) else {
+            throw InstallerError.releaseLookupFailed
+        }
+
+        guard let release = try JSONSerialization.jsonObject(with: releaseData) as? [String: Any],
+              let assets = release["assets"] as? [[String: Any]] else {
+            throw InstallerError.noDownloadFound
+        }
+
+        let archives = assets.compactMap { asset -> (String, URL)? in
+            guard let name = asset["name"] as? String,
+                  let urlString = asset["browser_download_url"] as? String,
+                  name.lowercased().contains("staging"),
+                  name.lowercased().hasSuffix(".tar.xz"),
+                  let url = URL(string: urlString) else { return nil }
+            return (name, url)
+        }
+
+        guard let archive = archives.first(where: {
+            $0.0.lowercased().contains("osx64") || $0.0.lowercased().contains("x86_64")
+        }) ?? archives.first else {
+            throw InstallerError.noDownloadFound
+        }
+
+        let (archiveURL, downloadResponse) = try await URLSession.shared.download(from: archive.1)
+        guard let downloadHTTP = downloadResponse as? HTTPURLResponse,
+              (200...299).contains(downloadHTTP.statusCode) else {
+            throw InstallerError.downloadFailed
+        }
+
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("exeLauncher-Wine-\(UUID().uuidString)", isDirectory: true)
+        let extractionDirectory = temporaryDirectory.appendingPathComponent("Extracted", isDirectory: true)
+        try fileManager.createDirectory(at: extractionDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+        let localArchive = temporaryDirectory.appendingPathComponent(archive.0)
+        try fileManager.moveItem(at: archiveURL, to: localArchive)
+
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tar.arguments = ["-xJf", localArchive.path, "-C", extractionDirectory.path]
+        let tarErrors = Pipe()
+        tar.standardError = tarErrors
+        try tar.run()
+        tar.waitUntilExit()
+        guard tar.terminationStatus == 0 else {
+            let details = String(data: tarErrors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw InstallerError.extractionFailed(details)
+        }
+
+        guard let appBundle = findWineApp(in: extractionDirectory) else {
+            throw InstallerError.appBundleNotFound
+        }
+
+        try fileManager.createDirectory(at: installDirectory, withIntermediateDirectories: true)
+        let destination = installDirectory.appendingPathComponent(appBundle.lastPathComponent)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.copyItem(at: appBundle, to: destination)
+
+        guard WineRuntime.executable(named: "wine", in: destination) != nil ||
+              WineRuntime.executable(named: "wine64", in: destination) != nil,
+              WineRuntime.executable(named: "wineboot", in: destination) != nil else {
+            try? fileManager.removeItem(at: destination)
+            throw InstallerError.invalidWineBundle
+        }
+
+        UserDefaults.standard.set(destination.path, forKey: WineRuntime.preferenceKey)
+        return destination
+    }
+
+    private static func findWineApp(in directory: URL) -> URL? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        for case let url as URL in enumerator where url.pathExtension == "app" {
+            if WineRuntime.executable(named: "wine", in: url) != nil ||
+               WineRuntime.executable(named: "wine64", in: url) != nil {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private static func checkRosetta() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
+        process.arguments = ["-x86_64", "/usr/bin/true"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw InstallerError.rosettaRequired
+        }
+        guard process.terminationStatus == 0 else {
+            throw InstallerError.rosettaRequired
+        }
+    }
+
+    enum InstallerError: LocalizedError {
+        case rosettaRequired
+        case releaseLookupFailed
+        case noDownloadFound
+        case downloadFailed
+        case extractionFailed(String)
+        case appBundleNotFound
+        case invalidWineBundle
+
+        var errorDescription: String? {
+            switch self {
+            case .rosettaRequired:
+                return "Rosetta 2 is required for this Wine build. Install it in Terminal with: softwareupdate --install-rosetta"
+            case .releaseLookupFailed:
+                return "Could not retrieve the official Wine release information from GitHub."
+            case .noDownloadFound:
+                return "No Wine Staging macOS archive was found in the official release."
+            case .downloadFailed:
+                return "The Wine download did not complete successfully."
+            case .extractionFailed(let details):
+                return details.isEmpty ? "Could not extract the Wine archive." : "Could not extract Wine: \(details)"
+            case .appBundleNotFound:
+                return "The downloaded archive did not contain a Wine app bundle."
+            case .invalidWineBundle:
+                return "The downloaded app bundle is missing Wine executables."
+            }
+        }
     }
 }
 
@@ -409,6 +561,7 @@ struct BottlesView: View {
     @State private var runtimeApp = WineRuntime.selectedAppURL
     @State private var newBottleName = ""
     @State private var isCreating = false
+    @State private var isInstallingDependencies = false
     @State private var statusMessage: String?
     @State private var errorMessage: String?
     @State private var showingError = false
@@ -429,10 +582,9 @@ struct BottlesView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    Button("Install Dependencies") { installDependencies() }
+                        .disabled(isInstallingDependencies || runtimeReady)
                     Button("Select Wine app…") { selectRuntime() }
-                    Button("Download Wine 11.16…") {
-                        NSWorkspace.shared.open(WineRuntime.releaseURL)
-                    }
                 }
                 Section("Your bottles") {
                     if bottles.isEmpty {
@@ -494,14 +646,27 @@ struct BottlesView: View {
                         Spacer()
                         Circle().fill(runtimeReady ? .green : .orange).frame(width: 9, height: 9)
                     }
-                    Text("Wine Staging 11.16 for macOS")
+                    Text("Wine Staging 11.21. GStreamer.framework is included in this release.")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        Button("Open Wine download page") {
-                            NSWorkspace.shared.open(WineRuntime.releaseURL)
-                        }.exeLauncherGlassButton()
-                        Button("Select installed Wine…") { selectRuntime() }
-                            .exeLauncherGlassButton(prominent: true)
+                        Button {
+                            installDependencies()
+                        } label: {
+                            if isInstallingDependencies {
+                                ProgressView().controlSize(.small)
+                                Text("Installing dependencies…")
+                            } else {
+                                Label(runtimeReady ? "Dependencies installed" : "Install Dependencies", systemImage: "arrow.down.circle")
+                            }
+                        }
+                        .disabled(isInstallingDependencies || runtimeReady)
+                        .exeLauncherGlassButton(prominent: true)
+                        Button("Select Wine manually…") { selectRuntime() }
+                            .exeLauncherGlassButton()
+                    }
+                    if isInstallingDependencies {
+                        Text("Downloading Wine and unpacking the runtime. This can take a while.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }.padding(4)
             }
@@ -534,6 +699,22 @@ struct BottlesView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func installDependencies() {
+        isInstallingDependencies = true
+        statusMessage = "Downloading Wine Staging and preparing its bundled dependencies."
+        Task {
+            do {
+                let installedApp = try await WineRuntimeInstaller.install()
+                runtimeApp = installedApp
+                statusMessage = "Wine Staging \(WineRuntime.version) and GStreamer are installed."
+            } catch {
+                showError(error.localizedDescription)
+                statusMessage = nil
+            }
+            isInstallingDependencies = false
+        }
     }
 
     private func selectRuntime() {
