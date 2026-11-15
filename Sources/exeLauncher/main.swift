@@ -19,12 +19,14 @@ struct Game: Identifiable, Codable, Equatable {
     var name: String
     var executablePath: String
     var source: String
+    var bottleID: UUID?
 
     init(name: String, executablePath: String, source: String = "Standalone") {
         self.id = UUID()
         self.name = name
         self.executablePath = executablePath
         self.source = source
+        self.bottleID = nil
     }
 }
 
@@ -573,6 +575,87 @@ enum BottleManager {
     }
 }
 
+enum GraphicsBackend: String {
+    case mullion
+    case dxvk
+    case vkd3d
+
+    var displayName: String {
+        switch self {
+        case .mullion: return "Mullion"
+        case .dxvk: return "DXVK"
+        case .vkd3d: return "VKD3D-Proton"
+        }
+    }
+}
+
+enum GraphicsBackendDetector {
+    // PE imports are a useful first signal. Games that load Direct3D dynamically
+    // fall back to Mullion, which is the bundled default backend.
+    static func detect(for executableURL: URL) -> GraphicsBackend {
+        guard let data = try? Data(contentsOf: executableURL, options: .mappedIfSafe) else {
+            return .mullion
+        }
+
+        func containsDLL(_ name: String) -> Bool {
+            data.range(of: Data(name.lowercased().utf8)) != nil ||
+            data.range(of: Data(name.uppercased().utf8)) != nil
+        }
+
+        if containsDLL("d3d12.dll") {
+            return .vkd3d
+        }
+        if containsDLL("d3d9.dll") || containsDLL("d3d8.dll") {
+            return .dxvk
+        }
+        return .mullion
+    }
+}
+
+enum GameLauncher {
+    static func launch(game: Game, bottle: Bottle, runtimeApp: URL) throws -> (Process, GraphicsBackend) {
+        guard let wine = WineRuntime.executable(named: "wine", in: runtimeApp) else {
+            throw LaunchError.wineNotFound
+        }
+
+        let backend = GraphicsBackendDetector.detect(
+            for: URL(fileURLWithPath: game.executablePath)
+        )
+
+        let process = Process()
+        process.executableURL = wine
+        process.arguments = [game.executablePath]
+        process.currentDirectoryURL = URL(fileURLWithPath: game.executablePath).deletingLastPathComponent()
+
+        var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "WINEARCH")
+        environment["WINEPREFIX"] = bottle.directoryURL.path
+        environment["WINE"] = wine.path
+        environment["WINELOADER"] = wine.path
+        environment["WINEDEBUG"] = "-all"
+
+        switch backend {
+        case .mullion:
+            environment.removeValue(forKey: "GRAPHICS_BACKEND")
+        case .dxvk:
+            environment["GRAPHICS_BACKEND"] = "dxvk"
+        case .vkd3d:
+            environment["GRAPHICS_BACKEND"] = "vkd3d"
+        }
+
+        process.environment = environment
+        try process.run()
+        return (process, backend)
+    }
+
+    enum LaunchError: LocalizedError {
+        case wineNotFound
+        var errorDescription: String? {
+            "MetalSharp Wine was not found. Install the graphics dependencies first."
+        }
+    }
+}
+
 enum SteamInstaller {
     static let downloadURL = URL(string: "https://cdn.fastly.steamstatic.com/client/installer/SteamSetup.exe")!
 
@@ -624,6 +707,9 @@ struct LauncherView: View {
     @State private var steamInstallerPath: String?
     @State private var errorMessage: String?
     @State private var showingError = false
+    @State private var isLaunchingGame = false
+    @State private var gameLaunchStatus: String?
+    @State private var launchedProcesses: [Process] = []
 
     private var selectedGame: Game? { games.first { $0.id == selectedGameID } }
 
@@ -762,12 +848,71 @@ struct LauncherView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(4)
             }
-            Label("Game launching will be connected to bottles in the next step.", systemImage: "info.circle")
-                .foregroundStyle(.secondary)
+            Button {
+                launchGame(game)
+            } label: {
+                if isLaunchingGame {
+                    ProgressView().controlSize(.small)
+                    Text("Preparing game…")
+                } else {
+                    Label("Play", systemImage: "play.fill")
+                }
+            }
+            .disabled(isLaunchingGame || WineRuntime.selectedAppURL == nil)
+            .exeLauncherGlassButton(prominent: true)
+
+            if let gameLaunchStatus {
+                Text(gameLaunchStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
             Spacer()
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func launchGame(_ selectedGame: Game) {
+        guard let runtimeApp = WineRuntime.selectedAppURL,
+              WineRuntime.executable(named: "wine", in: runtimeApp) != nil else {
+            showError("Install MetalSharp Wine in the Bottles tab before launching a game.")
+            return
+        }
+
+        isLaunchingGame = true
+        gameLaunchStatus = "Preparing a separate bottle for this game."
+        Task {
+            do {
+                var game = selectedGame
+                let bottle: Bottle
+                if let existingID = game.bottleID,
+                   let existingBottle = BottleStore.load().first(where: { $0.id == existingID }) {
+                    bottle = existingBottle
+                } else {
+                    bottle = try await Task.detached(priority: .userInitiated) {
+                        try await BottleManager.create(name: game.name, runtimeApp: runtimeApp)
+                    }.value
+                    game.bottleID = bottle.id
+                    if let index = games.firstIndex(where: { $0.id == game.id }) {
+                        games[index] = game
+                        GameStore.save(games)
+                    }
+                }
+
+                let (process, backend) = try GameLauncher.launch(
+                    game: game,
+                    bottle: bottle,
+                    runtimeApp: runtimeApp
+                )
+                launchedProcesses.append(process)
+                gameLaunchStatus = "Started with \\(backend.displayName) in bottle '\\(bottle.name)'."
+            } catch {
+                showError(error.localizedDescription)
+                gameLaunchStatus = nil
+            }
+            isLaunchingGame = false
+        }
     }
 
     private func importGame(_ result: Result<[URL], Error>) {
