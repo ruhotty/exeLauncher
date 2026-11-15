@@ -97,7 +97,7 @@ enum BottleStore {
 
 enum WineRuntime {
     static let version = "MetalSharp Wine (latest Apple Silicon release)"
-    static let releaseURL = URL(string: "https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.21")!
+    static let releaseURL = URL(string: "https://github.com/metalsharp/MetalSharp-Wine/releases/latest")!
     static let preferenceKey = "SelectedWineAppPath"
 
     static var installDirectory: URL {
