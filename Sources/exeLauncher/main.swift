@@ -349,10 +349,11 @@ enum WinetricksInstaller {
         process.standardError = output
 
         try process.run()
+        let outputData = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
         guard process.terminationStatus == 0 else {
-            let details = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let details = String(data: outputData, encoding: .utf8) ?? ""
             throw DependencyError.installationFailed(details)
         }
     }
