@@ -403,8 +403,14 @@ extension View {
     }
 }
 
+enum LauncherSection: Hashable {
+    case library
+    case bottles
+}
+
 struct LauncherView: View {
     @State private var games = GameStore.load()
+    @State private var selectedSection: LauncherSection = .library
     @State private var selectedGameID: UUID?
     @State private var showingFileImporter = false
     @State private var isDownloadingSteam = false
@@ -415,12 +421,34 @@ struct LauncherView: View {
     private var selectedGame: Game? { games.first { $0.id == selectedGameID } }
 
     var body: some View {
-        TabView {
-            libraryTab
-                .tabItem { Label("Library", systemImage: "gamecontroller") }
-            BottlesView()
-                .tabItem { Label("Bottles", systemImage: "shippingbox") }
+        NavigationSplitView {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 280)
+        } detail: {
+            Group {
+                if selectedSection == .bottles {
+                    BottlesView()
+                } else if let game = selectedGame {
+                    gameDetail(game)
+                } else {
+                    homeView
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    if selectedSection == .library {
+                        Button {
+                            showingFileImporter = true
+                        } label: {
+                            Label("Add Game", systemImage: "plus")
+                        }
+                        .help("Add a Windows game")
+                    }
+                }
+            }
         }
+        .navigationSplitViewStyle(.balanced)
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [UTType(filenameExtension: "exe") ?? .data],
@@ -433,34 +461,53 @@ struct LauncherView: View {
         }
     }
 
-    private var libraryTab: some View {
-        NavigationSplitView {
-            List(selection: $selectedGameID) {
-                Section("Library") {
-                    Label("All Games", systemImage: "square.grid.2x2").tag(Optional<UUID>.none)
+    private var sidebar: some View {
+        List {
+            Section("Library") {
+                Button {
+                    selectedSection = .library
+                    selectedGameID = nil
+                } label: {
+                    Label("All Games", systemImage: "square.grid.2x2")
+                        .foregroundStyle(selectedSection == .library && selectedGameID == nil ? Color.accentColor : Color.primary)
                 }
-                Section("Your Games") {
-                    ForEach(games) { game in
-                        Label(game.name, systemImage: "gamecontroller").tag(Optional(game.id))
+                .buttonStyle(.plain)
+
+                ForEach(games) { game in
+                    Button {
+                        selectedSection = .library
+                        selectedGameID = game.id
+                    } label: {
+                        Label(game.name, systemImage: "gamecontroller")
+                            .lineLimit(1)
                     }
-                    .onDelete(perform: deleteGames)
-                }
-                Section("Windows Steam") {
-                    Label("Steam for Windows", systemImage: "steam").foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Delete Game", role: .destructive) {
+                            deleteGame(game)
+                        }
+                    }
                 }
             }
-            .listStyle(.sidebar)
-            .navigationTitle("exeLauncher")
-            .toolbar {
-                ToolbarItem {
-                    Button { showingFileImporter = true } label: {
-                        Label("Add Game", systemImage: "plus")
-                    }
+
+            Section("Manage") {
+                Button {
+                    selectedSection = .bottles
+                    selectedGameID = nil
+                } label: {
+                    Label("Bottles", systemImage: "shippingbox")
+                        .foregroundStyle(selectedSection == .bottles ? Color.accentColor : Color.primary)
                 }
+                .buttonStyle(.plain)
             }
-        } detail: {
-            if let game = selectedGame { gameDetail(game) } else { homeView }
+
+            Section("Windows Steam") {
+                Label("Steam for Windows", systemImage: "steam")
+                    .foregroundStyle(.secondary)
+            }
         }
+        .listStyle(.sidebar)
+        .navigationTitle("exeLauncher")
     }
 
     private var homeView: some View {
@@ -472,7 +519,9 @@ struct LauncherView: View {
             HStack {
                 Button { showingFileImporter = true } label: {
                     Label("Add Windows game", systemImage: "plus")
-                }.exeLauncherGlassButton(prominent: true)
+                }
+                .exeLauncherGlassButton(prominent: true)
+
                 Button { Task { await downloadSteamInstaller() } } label: {
                     if isDownloadingSteam {
                         ProgressView().controlSize(.small)
@@ -531,15 +580,18 @@ struct LauncherView: View {
             let game = Game(name: sourceURL.deletingPathExtension().lastPathComponent, executablePath: destination.path)
             games.append(game)
             GameStore.save(games)
+            selectedSection = .library
             selectedGameID = game.id
-        } catch { showError(error.localizedDescription) }
+        } catch {
+            showError(error.localizedDescription)
+        }
     }
 
-    private func deleteGames(at offsets: IndexSet) {
-        let removedGames = offsets.map { games[$0] }
-        for game in removedGames { try? FileManager.default.removeItem(atPath: game.executablePath) }
-        games.remove(atOffsets: offsets)
+    private func deleteGame(_ game: Game) {
+        try? FileManager.default.removeItem(atPath: game.executablePath)
+        games.removeAll { $0.id == game.id }
         GameStore.save(games)
+        if selectedGameID == game.id { selectedGameID = nil }
     }
 
     @MainActor
