@@ -222,8 +222,8 @@ enum WineRuntimeInstaller {
             throw InstallerError.appBundleNotFound
         }
 
-        try fileManager.createDirectory(at: installDirectory, withIntermediateDirectories: true)
-        let destination = installDirectory.appendingPathComponent(appBundle.lastPathComponent)
+        try fileManager.createDirectory(at: WineRuntime.installDirectory, withIntermediateDirectories: true)
+        let destination = WineRuntime.installDirectory.appendingPathComponent(appBundle.lastPathComponent)
         if fileManager.fileExists(atPath: destination.path) {
             try fileManager.removeItem(at: destination)
         }
