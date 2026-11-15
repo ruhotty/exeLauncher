@@ -1512,7 +1512,6 @@ struct BottlesView: View {
     @State private var showingError = false
     @State private var bottlePendingDeletion: Bottle?
     @State private var isInstallingEXE = false
-    @State private var bottleReadyToAddGame: Bottle?
 
     private var runtimeReady: Bool {
         WineRuntime.selectedAppURL?.lastPathComponent == "MetalSharp-Wine.app" &&
@@ -1813,7 +1812,6 @@ struct BottlesView: View {
                 process.standardError = FileHandle.nullDevice
                 try process.run()
                 ExeLauncherProcessRegistry.register(process)
-                bottleReadyToAddGame = bottle
                 statusMessage = "Installer started in bottle '\(bottle.name)'. Finish installing it, then click Add Game and choose the game's main .exe from the bottle's C: drive."
             } catch {
                 if hasSecurityScope { selectedURL.stopAccessingSecurityScopedResource() }
