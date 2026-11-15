@@ -299,6 +299,7 @@ enum WineRuntimeInstaller {
 
 enum CabextractInstaller {
     private static let formulaURL = URL(string: "https://formulae.brew.sh/api/formula/cabextract.json")!
+    private static let registryTokenURL = URL(string: "https://ghcr.io/token?scope=repository:homebrew/core/cabextract:pull")!
 
     static var installDirectory: URL {
         WineRuntime.installDirectory
@@ -315,9 +316,10 @@ enum CabextractInstaller {
             return executableURL
         }
 
-        var request = URLRequest(url: formulaURL)
-        request.setValue("exeLauncher", forHTTPHeaderField: "User-Agent")
-        let (metadata, metadataResponse) = try await URLSession.shared.data(for: request)
+        var metadataRequest = URLRequest(url: formulaURL)
+        metadataRequest.setValue("exeLauncher", forHTTPHeaderField: "User-Agent")
+        metadataRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (metadata, metadataResponse) = try await URLSession.shared.data(for: metadataRequest)
         guard let metadataHTTP = metadataResponse as? HTTPURLResponse,
               (200...299).contains(metadataHTTP.statusCode),
               let formula = try JSONSerialization.jsonObject(with: metadata) as? [String: Any],
@@ -327,17 +329,34 @@ enum CabextractInstaller {
             throw InstallerError.metadataUnavailable
         }
 
-        let tag = bottleTag()
-        guard let selected = files[tag] as? [String: Any],
+        guard let selected = selectBottle(from: files),
               let urlString = selected["url"] as? String,
               let expectedSHA = selected["sha256"] as? String,
               let downloadURL = URL(string: urlString) else {
             throw InstallerError.unsupportedMac
         }
 
-        let (archiveURL, response) = try await URLSession.shared.download(from: downloadURL)
+        // GHCR requires an anonymous bearer token before its public bottle
+        // archive can be downloaded. A plain URLSession download gets HTTP 401.
+        var tokenRequest = URLRequest(url: registryTokenURL)
+        tokenRequest.setValue("exeLauncher", forHTTPHeaderField: "User-Agent")
+        tokenRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (tokenData, tokenResponse) = try await URLSession.shared.data(for: tokenRequest)
+        guard let tokenHTTP = tokenResponse as? HTTPURLResponse,
+              (200...299).contains(tokenHTTP.statusCode),
+              let tokenJSON = try JSONSerialization.jsonObject(with: tokenData) as? [String: Any],
+              let token = (tokenJSON["token"] as? String) ?? (tokenJSON["access_token"] as? String),
+              !token.isEmpty else {
+            throw InstallerError.registryAuthenticationFailed
+        }
+
+        var bottleRequest = URLRequest(url: downloadURL)
+        bottleRequest.setValue("exeLauncher", forHTTPHeaderField: "User-Agent")
+        bottleRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (archiveURL, response) = try await URLSession.shared.download(for: bottleRequest)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw InstallerError.downloadFailed
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw InstallerError.downloadFailed(status)
         }
 
         let archiveData = try Data(contentsOf: archiveURL)
@@ -353,7 +372,7 @@ enum CabextractInstaller {
         defer { try? fileManager.removeItem(at: temporaryDirectory) }
 
         let archive = temporaryDirectory.appendingPathComponent("cabextract.tar.gz")
-        try fileManager.moveItem(at: archiveURL, to: archive)
+        try fileManager.copyItem(at: archiveURL, to: archive)
 
         let tar = Process()
         tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
@@ -362,8 +381,9 @@ enum CabextractInstaller {
         tar.standardError = errors
         try tar.run()
         tar.waitUntilExit()
+        let extractionError = errors.fileHandleForReading.readDataToEndOfFile()
         guard tar.terminationStatus == 0 else {
-            let detail = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let detail = String(data: extractionError, encoding: .utf8) ?? ""
             throw InstallerError.extractionFailed(detail)
         }
 
@@ -380,28 +400,50 @@ enum CabextractInstaller {
         try fileManager.createDirectory(at: binDirectory, withIntermediateDirectories: true)
         try fileManager.copyItem(at: found, to: executableURL)
         try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        // Verify the downloaded binary actually starts before marking the
+        // dependency as installed.
+        let verification = Process()
+        verification.executableURL = executableURL
+        verification.arguments = ["--version"]
+        verification.standardOutput = Pipe()
+        verification.standardError = Pipe()
+        try verification.run()
+        verification.waitUntilExit()
+        guard verification.terminationStatus == 0 else {
+            try? fileManager.removeItem(at: installDirectory)
+            throw InstallerError.executableNotFound
+        }
+
         return executableURL
     }
 
-    private static func bottleTag() -> String {
+    private static func selectBottle(from files: [String: Any]) -> [String: Any]? {
         #if arch(arm64)
         let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-        let codename: String
+        let preferredTags: [String]
         switch major {
-        case 27...: codename = "golden_gate"
-        case 26: codename = "tahoe"
-        case 15: codename = "sequoia"
-        case 14: codename = "sonoma"
-        case 13: codename = "ventura"
-        case 12: codename = "monterey"
-        default: codename = "big_sur"
+        case 27...: preferredTags = ["arm64_golden_gate", "arm64_tahoe", "arm64_sequoia"]
+        case 26: preferredTags = ["arm64_tahoe", "arm64_sequoia"]
+        case 15: preferredTags = ["arm64_sequoia", "arm64_tahoe"]
+        case 14: preferredTags = ["arm64_sonoma", "arm64_sequoia"]
+        case 13: preferredTags = ["arm64_ventura", "arm64_sonoma"]
+        case 12: preferredTags = ["arm64_monterey", "arm64_ventura"]
+        default: preferredTags = ["arm64_big_sur", "arm64_monterey"]
         }
-        return "arm64_\(codename)"
         #else
         let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-        let codename = major >= 15 ? "sonoma" : (major == 14 ? "sonoma" : (major == 13 ? "ventura" : "monterey"))
-        return codename
+        let preferredTags = major >= 15 ? ["sequoia", "sonoma"] :
+            (major == 14 ? ["sonoma", "ventura"] :
+            (major == 13 ? ["ventura", "monterey"] : ["monterey", "big_sur"]))
         #endif
+
+        for tag in preferredTags {
+            if let bottle = files[tag] as? [String: Any] {
+                return bottle
+            }
+        }
+        return nil
     }
 
     private static func findCabextract(in directory: URL) -> URL? {
@@ -417,19 +459,28 @@ enum CabextractInstaller {
     enum InstallerError: LocalizedError {
         case metadataUnavailable
         case unsupportedMac
-        case downloadFailed
+        case registryAuthenticationFailed
+        case downloadFailed(Int)
         case checksumMismatch
         case extractionFailed(String)
         case executableNotFound
 
         var errorDescription: String? {
             switch self {
-            case .metadataUnavailable: return "Could not retrieve cabextract package information."
-            case .unsupportedMac: return "No compatible cabextract package was found for this Mac."
-            case .downloadFailed: return "The cabextract download failed."
-            case .checksumMismatch: return "The cabextract download failed its SHA-256 check."
-            case .extractionFailed(let detail): return detail.isEmpty ? "Could not extract cabextract." : "Could not extract cabextract: " + detail
-            case .executableNotFound: return "The downloaded package did not contain the cabextract executable."
+            case .metadataUnavailable:
+                return "Could not retrieve cabextract package information from Homebrew."
+            case .unsupportedMac:
+                return "No compatible Apple Silicon cabextract package was found for this Mac."
+            case .registryAuthenticationFailed:
+                return "Could not authenticate the public cabextract download with GitHub Container Registry."
+            case .downloadFailed(let status):
+                return "The cabextract download failed (HTTP \(status)). Check your internet connection and try again."
+            case .checksumMismatch:
+                return "The cabextract download failed its SHA-256 check."
+            case .extractionFailed(let detail):
+                return detail.isEmpty ? "Could not extract cabextract." : "Could not extract cabextract: " + detail
+            case .executableNotFound:
+                return "The downloaded package did not contain a working cabextract executable."
             }
         }
     }
