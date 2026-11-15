@@ -96,7 +96,7 @@ enum BottleStore {
 }
 
 enum WineRuntime {
-    static let version = "11.21"
+    static let version = "MetalSharp Wine (latest Apple Silicon release)"
     static let releaseURL = URL(string: "https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.21")!
     static let preferenceKey = "SelectedWineAppPath"
 
@@ -157,14 +157,13 @@ enum WineRuntime {
 }
 
 enum WineRuntimeInstaller {
-    private static let releaseAPI = URL(string: "https://api.github.com/repos/Gcenx/macOS_Wine_builds/releases/tags/11.21")!
+    private static let releaseAPI = URL(string: "https://api.github.com/repos/metalsharp/MetalSharp-Wine/releases/latest")!
 
     static func install() async throws -> URL {
-        try checkRosetta()
-
         var request = URLRequest(url: releaseAPI)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("exeLauncher", forHTTPHeaderField: "User-Agent")
+
         let (releaseData, releaseResponse) = try await URLSession.shared.data(for: request)
         guard let http = releaseResponse as? HTTPURLResponse,
               (200...299).contains(http.statusCode) else {
@@ -176,22 +175,24 @@ enum WineRuntimeInstaller {
             throw InstallerError.noDownloadFound
         }
 
-        let archives = assets.compactMap { asset -> (String, URL)? in
+        // Use the native Apple Silicon FEX build. It includes the graphics backends
+        // and does not require Rosetta.
+        let matchingAssets = assets.compactMap { asset -> (String, URL)? in
             guard let name = asset["name"] as? String,
                   let urlString = asset["browser_download_url"] as? String,
-                  name.lowercased().contains("staging"),
-                  name.lowercased().hasSuffix(".tar.xz"),
+                  name.lowercased().hasPrefix("metalsharp-wine-"),
+                  name.lowercased().contains("arm64"),
+                  !name.lowercased().contains("x86_64"),
+                  name.lowercased().hasSuffix(".zip"),
                   let url = URL(string: urlString) else { return nil }
             return (name, url)
         }
 
-        guard let archive = archives.first(where: {
-            $0.0.lowercased().contains("osx64") || $0.0.lowercased().contains("x86_64")
-        }) ?? archives.first else {
+        guard let archive = matchingAssets.first else {
             throw InstallerError.noDownloadFound
         }
 
-        let (archiveURL, downloadResponse) = try await URLSession.shared.download(from: archive.1)
+        let (downloadURL, downloadResponse) = try await URLSession.shared.download(from: archive.1)
         guard let downloadHTTP = downloadResponse as? HTTPURLResponse,
               (200...299).contains(downloadHTTP.statusCode) else {
             throw InstallerError.downloadFailed
@@ -199,23 +200,23 @@ enum WineRuntimeInstaller {
 
         let fileManager = FileManager.default
         let temporaryDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("exeLauncher-Wine-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("exeLauncher-MetalSharp-Wine-\\(UUID().uuidString)", isDirectory: true)
         let extractionDirectory = temporaryDirectory.appendingPathComponent("Extracted", isDirectory: true)
         try fileManager.createDirectory(at: extractionDirectory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: temporaryDirectory) }
 
         let localArchive = temporaryDirectory.appendingPathComponent(archive.0)
-        try fileManager.moveItem(at: archiveURL, to: localArchive)
+        try fileManager.moveItem(at: downloadURL, to: localArchive)
 
-        let tar = Process()
-        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        tar.arguments = ["-xJf", localArchive.path, "-C", extractionDirectory.path]
-        let tarErrors = Pipe()
-        tar.standardError = tarErrors
-        try tar.run()
-        tar.waitUntilExit()
-        guard tar.terminationStatus == 0 else {
-            let details = String(data: tarErrors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        unzip.arguments = ["-x", "-k", localArchive.path, extractionDirectory.path]
+        let errors = Pipe()
+        unzip.standardError = errors
+        try unzip.run()
+        unzip.waitUntilExit()
+        guard unzip.terminationStatus == 0 else {
+            let details = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             throw InstallerError.extractionFailed(details)
         }
 
@@ -230,8 +231,7 @@ enum WineRuntimeInstaller {
         }
         try fileManager.copyItem(at: appBundle, to: destination)
 
-        guard WineRuntime.executable(named: "wine", in: destination) != nil ||
-              WineRuntime.executable(named: "wine64", in: destination) != nil,
+        guard WineRuntime.executable(named: "wine", in: destination) != nil,
               WineRuntime.executable(named: "wineboot", in: destination) != nil else {
             try? fileManager.removeItem(at: destination)
             throw InstallerError.invalidWineBundle
@@ -249,33 +249,15 @@ enum WineRuntimeInstaller {
         ) else { return nil }
 
         for case let url as URL in enumerator where url.pathExtension == "app" {
-            if WineRuntime.executable(named: "wine", in: url) != nil ||
-               WineRuntime.executable(named: "wine64", in: url) != nil {
+            if WineRuntime.executable(named: "wine", in: url) != nil &&
+               WineRuntime.executable(named: "wineboot", in: url) != nil {
                 return url
             }
         }
         return nil
     }
 
-    private static func checkRosetta() throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
-        process.arguments = ["-x86_64", "/usr/bin/true"]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw InstallerError.rosettaRequired
-        }
-        guard process.terminationStatus == 0 else {
-            throw InstallerError.rosettaRequired
-        }
-    }
-
     enum InstallerError: LocalizedError {
-        case rosettaRequired
         case releaseLookupFailed
         case noDownloadFound
         case downloadFailed
@@ -285,18 +267,16 @@ enum WineRuntimeInstaller {
 
         var errorDescription: String? {
             switch self {
-            case .rosettaRequired:
-                return "Rosetta 2 is required for this Wine build. Install it in Terminal with: softwareupdate --install-rosetta"
             case .releaseLookupFailed:
-                return "Could not retrieve the official Wine release information from GitHub."
+                return "Could not retrieve the latest MetalSharp Wine release from GitHub."
             case .noDownloadFound:
-                return "No Wine Staging macOS archive was found in the official release."
+                return "No native Apple Silicon MetalSharp Wine package was found in the latest release."
             case .downloadFailed:
-                return "The Wine download did not complete successfully."
+                return "The MetalSharp Wine download did not complete successfully."
             case .extractionFailed(let details):
-                return details.isEmpty ? "Could not extract the Wine archive." : "Could not extract Wine: \(details)"
+                return details.isEmpty ? "Could not extract MetalSharp Wine." : "Could not extract MetalSharp Wine: \\(details)"
             case .appBundleNotFound:
-                return "The downloaded archive did not contain a Wine app bundle."
+                return "The downloaded archive did not contain MetalSharp-Wine.app."
             case .invalidWineBundle:
                 return "The downloaded app bundle is missing Wine executables."
             }
@@ -476,9 +456,9 @@ enum WinetricksInstaller {
         process.arguments = [scriptPath.path, "-q", "corefonts", "vcrun2022", "d3dcompiler_47"]
 
         var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "WINEARCH")
         environment["WINEPREFIX"] = prefix.path
-        environment["WINEARCH"] = "win64"
-        environment["WINE"] = wine.path
+                environment["WINE"] = wine.path
         environment["WINELOADER"] = wine.path
         environment["WINEDEBUG"] = "-all"
         let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -533,7 +513,7 @@ enum BottleManager {
 
         let process = Process()
         process.executableURL = wineboot
-        process.arguments = ["--init"]
+        process.arguments = ["-i"]
         var environment = ProcessInfo.processInfo.environment
         environment["WINEPREFIX"] = bottle.directoryURL.path
         environment["WINEARCH"] = "win64"
@@ -865,14 +845,14 @@ struct BottlesView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(runtimeReady ? "Wine is ready" : "Wine dependencies are missing")
                                     .font(.headline)
-                                Text(runtimeApp?.lastPathComponent ?? "Install Wine Staging to create Windows environments.")
+                                Text(runtimeApp?.lastPathComponent ?? "Install MetalSharp Wine to create Windows environments.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
                         }
 
-                        Text("Install Wine Staging 11.21. This package includes GStreamer, Wine Gecko and Wine Mono.")
+                        Text("Install MetalSharp Wine for Apple Silicon. It includes Mullion, DXVK, VKD3D-Proton and MoltenVK graphics backends.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -903,7 +883,7 @@ struct BottlesView: View {
                         if isInstallingDependencies {
                             ProgressView()
                                 .progressViewStyle(.linear)
-                            Text("Downloading and unpacking Wine. This can take a few minutes.")
+                            Text("Downloading and unpacking the Wine runtime and graphics components. This can take a while.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1029,7 +1009,7 @@ struct BottlesView: View {
     private func installDependencies() {
         guard !runtimeReady else { return }
         isInstallingDependencies = true
-        statusMessage = "Connecting to GitHub and downloading Wine Staging."
+        statusMessage = "Connecting to GitHub and downloading MetalSharp Wine."
         Task {
             do {
                 let installedApp = try await WineRuntimeInstaller.install()
