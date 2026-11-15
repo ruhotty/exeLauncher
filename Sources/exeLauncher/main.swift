@@ -684,6 +684,13 @@ enum SteamInstaller {
     }
 }
 
+struct SteamLibraryGame: Identifiable, Equatable {
+    let appID: String
+    let name: String
+    let installDirectory: URL
+    var id: String { appID }
+}
+
 enum SteamManager {
     private static let bottleIDKey = "SteamBottleID"
 
@@ -694,8 +701,7 @@ enum SteamManager {
     }
 
     static func steamExecutable(in bottle: Bottle) -> URL {
-        bottle.directoryURL
-            .appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
+        bottle.directoryURL.appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
     }
 
     static func install(runtimeApp: URL) async throws -> (Bottle, Process) {
@@ -707,34 +713,65 @@ enum SteamManager {
             UserDefaults.standard.set(bottle.id.uuidString, forKey: bottleIDKey)
         }
 
+        let steamExe = steamExecutable(in: bottle)
+        if FileManager.default.fileExists(atPath: steamExe.path) {
+            return (bottle, try runWindowsProgram(steamExe, arguments: [], in: bottle, runtimeApp: runtimeApp))
+        }
+
         let installer = try await SteamInstaller.download()
-        let process = try runWindowsProgram(
-            installer,
-            in: bottle,
-            runtimeApp: runtimeApp
-        )
+        let process = try runWindowsProgram(installer, arguments: [], in: bottle, runtimeApp: runtimeApp)
         return (bottle, process)
     }
 
     static func launch(runtimeApp: URL) throws -> Process {
         guard let bottle else { throw SteamError.bottleMissing }
         let executable = steamExecutable(in: bottle)
-        guard FileManager.default.fileExists(atPath: executable.path) else {
-            throw SteamError.notInstalled
-        }
-        return try runWindowsProgram(executable, in: bottle, runtimeApp: runtimeApp)
+        guard FileManager.default.fileExists(atPath: executable.path) else { throw SteamError.notInstalled }
+        return try runWindowsProgram(executable, arguments: [], in: bottle, runtimeApp: runtimeApp)
     }
 
-    private static func runWindowsProgram(_ executable: URL, in bottle: Bottle, runtimeApp: URL) throws -> Process {
-        guard let wine = WineRuntime.executable(named: "wine", in: runtimeApp) else {
-            throw SteamError.wineMissing
-        }
+    static func installedGames() -> [SteamLibraryGame] {
+        guard let bottle else { return [] }
+        let steamApps = steamExecutable(in: bottle).deletingLastPathComponent()
+            .appendingPathComponent("steamapps", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: steamApps, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        ) else { return [] }
 
+        return files
+            .filter { $0.lastPathComponent.hasPrefix("appmanifest_") && $0.pathExtension == "acf" }
+            .compactMap { manifest in
+                guard let contents = try? String(contentsOf: manifest, encoding: .utf8),
+                      let appID = capture(#"\"appid\"\s+\"(\d+)\""#, in: contents),
+                      let name = capture(#"\"name\"\s+\"([^\"]+)\""#, in: contents),
+                      let folder = capture(#"\"installdir\"\s+\"([^\"]+)\""#, in: contents) else { return nil }
+                let directory = steamApps.appendingPathComponent("common", isDirectory: true)
+                    .appendingPathComponent(folder, isDirectory: true)
+                guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
+                return SteamLibraryGame(appID: appID, name: name, installDirectory: directory)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    static func launch(game: SteamLibraryGame, runtimeApp: URL) throws -> Process {
+        guard let bottle else { throw SteamError.bottleMissing }
+        let executable = steamExecutable(in: bottle)
+        guard FileManager.default.fileExists(atPath: executable.path) else { throw SteamError.notInstalled }
+        return try runWindowsProgram(executable, arguments: ["-applaunch", game.appID], in: bottle, runtimeApp: runtimeApp)
+    }
+
+    private static func capture(_ pattern: String, in text: String) -> String? {
+        guard let range = text.range(of: pattern, options: .regularExpression) else { return nil }
+        let parts = String(text[range]).split(separator: "\"").map(String.init)
+        return parts.count >= 4 ? parts[3] : nil
+    }
+
+    private static func runWindowsProgram(_ executable: URL, arguments: [String], in bottle: Bottle, runtimeApp: URL) throws -> Process {
+        guard let wine = WineRuntime.executable(named: "wine", in: runtimeApp) else { throw SteamError.wineMissing }
         let process = Process()
         process.executableURL = wine
-        process.arguments = [executable.path]
+        process.arguments = [executable.path] + arguments
         process.currentDirectoryURL = executable.deletingLastPathComponent()
-
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "WINEARCH")
         environment["WINEPREFIX"] = bottle.directoryURL.path
@@ -747,10 +784,7 @@ enum SteamManager {
     }
 
     enum SteamError: LocalizedError {
-        case bottleMissing
-        case notInstalled
-        case wineMissing
-
+        case bottleMissing, notInstalled, wineMissing
         var errorDescription: String? {
             switch self {
             case .bottleMissing: return "The Steam bottle was not found. Install Steam first."
@@ -774,6 +808,7 @@ extension View {
 
 enum LauncherSection: Hashable {
     case library
+    case steam
     case bottles
 }
 
@@ -800,7 +835,9 @@ struct LauncherView: View {
                 .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 280)
         } detail: {
             Group {
-                if selectedSection == .bottles {
+                if selectedSection == .steam {
+                    SteamLibraryView()
+                } else if selectedSection == .bottles {
                     BottlesView()
                 } else if let game = selectedGame {
                     gameDetail(game)
@@ -866,6 +903,15 @@ struct LauncherView: View {
 
             Section("Manage") {
                 Button {
+                    selectedSection = .steam
+                    selectedGameID = nil
+                } label: {
+                    Label("Steam Library", systemImage: "steam")
+                        .foregroundStyle(selectedSection == .steam ? Color.accentColor : Color.primary)
+                }
+                .buttonStyle(.plain)
+
+                Button {
                     selectedSection = .bottles
                     selectedGameID = nil
                 } label: {
@@ -873,11 +919,6 @@ struct LauncherView: View {
                         .foregroundStyle(selectedSection == .bottles ? Color.accentColor : Color.primary)
                 }
                 .buttonStyle(.plain)
-            }
-
-            Section("Windows Steam") {
-                Label("Steam for Windows", systemImage: "steam")
-                    .foregroundStyle(.secondary)
             }
         }
         .listStyle(.sidebar)
@@ -1053,7 +1094,7 @@ struct LauncherView: View {
                 }.value
                 launchedProcesses.append(process)
                 steamInstallerPath = SteamInstaller.installerURL.path
-                steamStatus = "Steam installer opened in the dedicated '(bottle.name)' bottle. Finish the installation window, then click Launch Steam."
+                steamStatus = "Steam is opening in its dedicated '\(bottle.name)' bottle. If this is the first install, finish the Steam setup window, then open Steam Library and refresh."
             } catch {
                 showError(error.localizedDescription)
                 steamStatus = nil
@@ -1079,6 +1120,94 @@ struct LauncherView: View {
     private func showError(_ message: String) {
         errorMessage = message
         showingError = true
+    }
+}
+
+struct SteamLibraryView: View {
+    @State private var games = SteamManager.installedGames()
+    @State private var isLaunching = false
+    @State private var statusMessage: String?
+    @State private var errorMessage: String?
+    @State private var showingError = false
+    @State private var launchedProcesses: [Process] = []
+
+    private var runtimeReady: Bool {
+        WineRuntime.selectedAppURL != nil && WineRuntime.wineExecutable != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Steam Library").font(.largeTitle.bold())
+                    Text("Games installed in your Windows Steam bottle.").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    games = SteamManager.installedGames()
+                    statusMessage = "\(games.count) installed Steam games found."
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .exeLauncherGlassButton()
+            }
+
+            if SteamManager.bottle == nil {
+                ContentUnavailableView("Steam is not installed", systemImage: "steam",
+                    description: Text("Go to the home screen and choose Install Steam first."))
+            } else if games.isEmpty {
+                ContentUnavailableView("No installed games found", systemImage: "gamecontroller",
+                    description: Text("Install games in Steam, then click Refresh."))
+            } else {
+                List(games) { game in
+                    HStack(spacing: 12) {
+                        Image(systemName: "gamecontroller.fill").font(.title2).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(game.name).font(.headline)
+                            Text("Steam AppID \(game.appID)").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button { launch(game) } label: {
+                            if isLaunching { ProgressView().controlSize(.small) }
+                            else { Label("Play", systemImage: "play.fill") }
+                        }
+                        .disabled(isLaunching || !runtimeReady)
+                        .exeLauncherGlassButton(prominent: true)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.inset)
+            }
+
+            if let statusMessage {
+                Text(statusMessage).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(28)
+        .alert("Could not start Steam game", isPresented: $showingError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage ?? "Unknown error.")
+        }
+    }
+
+    private func launch(_ game: SteamLibraryGame) {
+        guard let runtimeApp = WineRuntime.selectedAppURL else {
+            errorMessage = "Install MetalSharp Wine in the Bottles tab first."
+            showingError = true
+            return
+        }
+        isLaunching = true
+        do {
+            let process = try SteamManager.launch(game: game, runtimeApp: runtimeApp)
+            launchedProcesses.append(process)
+            statusMessage = "Steam is being asked to launch \(game.name). Keep Steam running while the game starts."
+        } catch {
+            errorMessage = error.localizedDescription
+            showingError = true
+        }
+        isLaunching = false
     }
 }
 
