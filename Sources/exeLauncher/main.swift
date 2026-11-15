@@ -3,8 +3,40 @@ import AppKit
 import UniformTypeIdentifiers
 import CryptoKit
 
+final class ExeLauncherAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        ExeLauncherProcessRegistry.terminateAll()
+        return .terminateNow
+    }
+}
+
+enum ExeLauncherProcessRegistry {
+    private static let lock = NSLock()
+    private static var processes: [Process] = []
+
+    static func register(_ process: Process) {
+        lock.lock()
+        processes.removeAll { !$0.isRunning }
+        processes.append(process)
+        lock.unlock()
+    }
+
+    static func terminateAll() {
+        lock.lock()
+        let runningProcesses = processes.filter { $0.isRunning }
+        processes.removeAll()
+        lock.unlock()
+
+        for process in runningProcesses {
+            process.terminate()
+        }
+    }
+}
+
 @main
 struct exeLauncherApp: App {
+    @NSApplicationDelegateAdaptor(ExeLauncherAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             LauncherView()
@@ -397,8 +429,7 @@ enum CabextractInstaller {
         let archiveData = try Data(contentsOf: archiveURL)
         let actualSHA = SHA256.hash(data: archiveData).map { String(format: "%02x", $0) }.joined()
         guard actualSHA.caseInsensitiveCompare(expectedSHA) == .orderedSame else {
-            throw InstallerError.checksumMismatch
-        }
+            throw InstallerError.checksumMismatch        }
 
         let fileManager = FileManager.default
         let temporaryDirectory = fileManager.temporaryDirectory
@@ -625,6 +656,7 @@ enum WinetricksInstaller {
         process.standardError = output
 
         try process.run()
+        ExeLauncherProcessRegistry.register(process)
         let outputData = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
@@ -689,6 +721,7 @@ enum BottleManager {
 
         do {
             try process.run()
+            ExeLauncherProcessRegistry.register(process)
             process.waitUntilExit()
         } catch {
             try? FileManager.default.removeItem(at: bottle.directoryURL)
@@ -797,8 +830,7 @@ enum GameLauncher {
 
         switch backend {
         case .mullion:
-            environment.removeValue(forKey: "GRAPHICS_BACKEND")
-        case .dxvk:
+            environment.removeValue(forKey: "GRAPHICS_BACKEND")        case .dxvk:
             environment["GRAPHICS_BACKEND"] = "dxvk"
         case .vkd3d:
             environment["GRAPHICS_BACKEND"] = "vkd3d"
@@ -806,6 +838,7 @@ enum GameLauncher {
 
         process.environment = environment
         try process.run()
+        ExeLauncherProcessRegistry.register(process)
         return (process, backend)
     }
 
@@ -951,6 +984,7 @@ enum SteamManager {
         environment["WINEDEBUG"] = "-all"
         process.environment = environment
         try process.run()
+        ExeLauncherProcessRegistry.register(process)
         return process
     }
 
@@ -1197,8 +1231,7 @@ struct LauncherView: View {
         Task {
             do {
                 var game = selectedGame
-                let bottle: Bottle
-                if let existingID = game.bottleID,
+                let bottle: Bottle                if let existingID = game.bottleID,
                    let existingBottle = BottleStore.load().first(where: { $0.id == existingID }) {
                     bottle = existingBottle
                 } else {
