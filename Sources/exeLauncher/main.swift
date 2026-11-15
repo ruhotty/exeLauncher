@@ -416,6 +416,14 @@ enum CabextractInstaller {
             throw InstallerError.executableNotFound
         }
 
+        // Homebrew bottles store bin/cabextract as a relative symlink into
+        // Cellar/cabextract/<version>/bin. Copy the resolved target, not the
+        // symlink itself, otherwise it points to a missing path after cleanup.
+        let resolvedExecutable = found.resolvingSymlinksInPath()
+        guard fileManager.isExecutableFile(atPath: resolvedExecutable.path) else {
+            throw InstallerError.executableNotFound
+        }
+
         try fileManager.createDirectory(at: installDirectory.deletingLastPathComponent(), withIntermediateDirectories: true)
         if fileManager.fileExists(atPath: installDirectory.path) {
             try fileManager.removeItem(at: installDirectory)
@@ -423,7 +431,7 @@ enum CabextractInstaller {
         try fileManager.createDirectory(at: installDirectory, withIntermediateDirectories: true)
         let binDirectory = installDirectory.appendingPathComponent("bin", isDirectory: true)
         try fileManager.createDirectory(at: binDirectory, withIntermediateDirectories: true)
-        try fileManager.copyItem(at: found, to: executableURL)
+        try fileManager.copyItem(at: resolvedExecutable, to: executableURL)
         try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
 
         // Verify the downloaded binary actually starts before marking the
