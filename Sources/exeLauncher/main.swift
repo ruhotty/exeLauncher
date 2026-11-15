@@ -742,9 +742,9 @@ enum SteamManager {
             .filter { $0.lastPathComponent.hasPrefix("appmanifest_") && $0.pathExtension == "acf" }
             .compactMap { manifest in
                 guard let contents = try? String(contentsOf: manifest, encoding: .utf8),
-                      let appID = capture(#"\"appid\"\s+\"(\d+)\""#, in: contents),
-                      let name = capture(#"\"name\"\s+\"([^\"]+)\""#, in: contents),
-                      let folder = capture(#"\"installdir\"\s+\"([^\"]+)\""#, in: contents) else { return nil }
+                      let appID = capture(#""appid"\s+"(\d+)""#, in: contents),
+                      let name = capture(#""name"\s+"([^"]+)""#, in: contents),
+                      let folder = capture(#""installdir"\s+"([^"]+)""#, in: contents) else { return nil }
                 let directory = steamApps.appendingPathComponent("common", isDirectory: true)
                     .appendingPathComponent(folder, isDirectory: true)
                 guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
@@ -761,9 +761,11 @@ enum SteamManager {
     }
 
     private static func capture(_ pattern: String, in text: String) -> String? {
-        guard let range = text.range(of: pattern, options: .regularExpression) else { return nil }
-        let parts = String(text[range]).split(separator: "\"").map(String.init)
-        return parts.count >= 4 ? parts[3] : nil
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
     }
 
     private static func runWindowsProgram(_ executable: URL, arguments: [String], in bottle: Bottle, runtimeApp: URL) throws -> Process {
