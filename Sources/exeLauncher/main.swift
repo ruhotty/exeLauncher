@@ -276,7 +276,7 @@ enum WineRuntimeInstaller {
             case .downloadFailed:
                 return "The MetalSharp Wine download did not complete successfully."
             case .extractionFailed(let details):
-                return details.isEmpty ? "Could not extract MetalSharp Wine." : "Could not extract MetalSharp Wine: \\(details)"
+                return details.isEmpty ? "Could not extract MetalSharp Wine." : "Could not extract MetalSharp Wine: \(details)"
             case .appBundleNotFound:
                 return "The downloaded archive did not contain MetalSharp-Wine.app."
             case .invalidWineBundle:
@@ -503,7 +503,7 @@ enum WinetricksInstaller {
 
 enum BottleManager {
     static func create(name: String, runtimeApp: URL) async throws -> Bottle {
-        guard let wineboot = WineRuntime.executable(named: "wineboot", in: runtimeApp) else {
+        guard let wine = WineRuntime.executable(named: "wine", in: runtimeApp) else {
             throw BottleError.winebootNotFound
         }
 
@@ -514,12 +514,14 @@ enum BottleManager {
         )
 
         let process = Process()
-        process.executableURL = wineboot
-        process.arguments = ["-i"]
+        process.executableURL = wine
+        process.arguments = ["wineboot", "-i"]
         var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "WINEARCH")
         environment["WINEPREFIX"] = bottle.directoryURL.path
+        environment["WINE"] = wine.path
         environment["WINEDEBUG"] = "-all"
-        environment["WINELOADER"] = WineRuntime.executable(named: "wine", in: runtimeApp)?.path
+        environment["WINELOADER"] = wine.path
         process.environment = environment
 
         let errors = Pipe()
@@ -858,7 +860,7 @@ struct LauncherView: View {
                     Label("Play", systemImage: "play.fill")
                 }
             }
-            .disabled(isLaunchingGame || WineRuntime.selectedAppURL == nil)
+            .disabled(isLaunchingGame || WineRuntime.selectedAppURL?.lastPathComponent != "MetalSharp-Wine.app")
             .exeLauncherGlassButton(prominent: true)
 
             if let gameLaunchStatus {
@@ -906,7 +908,7 @@ struct LauncherView: View {
                     runtimeApp: runtimeApp
                 )
                 launchedProcesses.append(process)
-                gameLaunchStatus = "Started with \\(backend.displayName) in bottle '\\(bottle.name)'."
+                gameLaunchStatus = "Started with \(backend.displayName) in bottle '\(bottle.name)'."
             } catch {
                 showError(error.localizedDescription)
                 gameLaunchStatus = nil
