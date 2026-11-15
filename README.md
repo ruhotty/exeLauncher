@@ -7,20 +7,31 @@ A native SwiftUI macOS launcher for Windows games, built Apple Silicon first.
 - Native SwiftUI interface with Liquid Glass styling on supported macOS versions.
 - Local game library and standalone `.exe` import.
 - Downloader for Valve's official Windows Steam installer.
-- Wine runtime selection.
+- One-click installer for Wine Staging 11.21.
+- Wine Staging 11.21 package includes GStreamer.framework, Wine Gecko, and Wine Mono.
 - Create, list, inspect, and delete isolated Wine bottles.
 
 Game launching and graphics translation layers are still in development.
 
-## Wine runtime
+## Install Dependencies
 
-exeLauncher does not bundle Wine in this repository. Install the Wine Staging 11.16 macOS package from the upstream release page:
+Open the Bottles tab and click **Install Dependencies**. exeLauncher retrieves the Wine Staging 11.21 release metadata from the official Gcenx/macOS_Wine_builds GitHub release, downloads the macOS staging archive, extracts it, and installs the Wine app bundle under:
 
-https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.16
+```
+~/Library/Application Support/exeLauncher/Runtime/
+```
 
-The upstream packages are distributed as `.tar.xz` archives containing a Wine app bundle. Extract the archive, move the Wine app to Applications, then select that app in exeLauncher under Bottles. The 11.16 release notes also list GStreamer.framework as a system requirement. Install it if it is not already present.
+GStreamer.framework v1.28.1 is included in this Wine release, so it does not need a separate installer. Wine Gecko and Wine Mono are also included in the package.
 
-The upstream package documents macOS Catalina or newer as supported and includes shared Wine Gecko and Mono components. Check the upstream release notes for current requirements.
+This Wine build uses x86_64 components. Apple Silicon Macs need Rosetta 2. exeLauncher checks for Rosetta before downloading. If it is missing, install it in Terminal:
+
+```sh
+softwareupdate --install-rosetta
+```
+
+The runtime is downloaded directly from the upstream release and is not committed to this repository. The app does not silently remove macOS quarantine flags or bypass Gatekeeper.
+
+Upstream release: https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.21
 
 ## Bottles
 
@@ -56,7 +67,7 @@ swift run
 - [x] Initial SwiftUI app and local game library.
 - [x] Import standalone Windows `.exe` files.
 - [x] Download official Windows Steam installer.
-- [x] Select an installed Wine runtime.
+- [x] One-click Wine Staging and bundled dependency installer.
 - [x] Create and manage isolated Wine prefixes.
 - [ ] Install Windows Steam into a dedicated bottle.
 - [ ] Launch standalone games through a selected bottle.
