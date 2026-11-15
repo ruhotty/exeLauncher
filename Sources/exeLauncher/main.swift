@@ -57,6 +57,31 @@ enum GameStore {
     static var gamesDirectory: URL { directory.appendingPathComponent("ImportedGames", isDirectory: true) }
     static var libraryFile: URL { directory.appendingPathComponent("library.json") }
 
+    // Repair permissions on exeLauncher's own Application Support folders so
+    // users never need to run chmod manually after a failed or interrupted setup.
+    static func prepareWritableDirectory(_ url: URL) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: url.path
+        )
+        guard FileManager.default.isWritableFile(atPath: url.path) else {
+            throw StorageError.directoryNotWritable(url.path)
+        }
+    }
+
+    enum StorageError: LocalizedError {
+        case directoryNotWritable(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .directoryNotWritable(let path):
+                return "exeLauncher cannot write to its data folder: " + path +
+                    ". Check that this folder belongs to your macOS user account."
+            }
+        }
+    }
+
     static func load() -> [Game] {
         guard let data = try? Data(contentsOf: libraryFile) else { return [] }
         return (try? JSONDecoder().decode([Game].self, from: data)) ?? []
@@ -753,9 +778,19 @@ enum SteamInstaller {
             throw DownloadError.invalidResponse
         }
         let destination = installerURL
-        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
-        try FileManager.default.moveItem(at: temporaryURL, to: destination)
+        // Prepare both levels explicitly. If an earlier version created these
+        // folders with restrictive permissions, repair them before downloading.
+        try GameStore.prepareWritableDirectory(GameStore.directory)
+        try GameStore.prepareWritableDirectory(destination.deletingLastPathComponent())
+
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.copyItem(at: temporaryURL, to: destination)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: destination.path
+        )
         return destination
     }
 
