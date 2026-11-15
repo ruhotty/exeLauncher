@@ -1,42 +1,50 @@
 # exeLauncher
 
-A native macOS launcher for Windows games. The project is being built for Apple Silicon first.
+A native SwiftUI macOS launcher for Windows games, built Apple Silicon first.
 
 ## Current status
 
-The first development build contains:
+- Native SwiftUI interface with Liquid Glass styling on supported macOS versions.
+- Local game library and standalone `.exe` import.
+- Downloader for Valve's official Windows Steam installer.
+- Wine runtime selection.
+- Create, list, inspect, and delete isolated Wine bottles.
 
-- A SwiftUI macOS app shell.
-- A local game library saved as JSON in Application Support.
-- Importing standalone Windows executable files into the launcher.
-- A downloader for Valve's official Windows Steam installer.
+Game launching and graphics translation layers are still in development.
 
-Game launching is not implemented yet. The next milestone is integrating a managed Wine runtime and per-game Wine prefixes.
+## Wine runtime
+
+exeLauncher does not bundle Wine in this repository. Install the Wine Staging 11.16 macOS package from the upstream release page:
+
+https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.16
+
+The upstream packages are distributed as `.tar.xz` archives containing a Wine app bundle. Extract the archive, move the Wine app to Applications, then select that app in exeLauncher under Bottles.
+
+The upstream package documents macOS Catalina or newer as supported and includes shared Wine Gecko and Mono components. Check the upstream release notes for current requirements.
+
+## Bottles
+
+Each bottle is a separate Wine prefix stored under:
+
+```
+~/Library/Application Support/exeLauncher/Bottles/
+```
+
+A bottle contains its own Windows C: drive, registry, and installed programs. Deleting a bottle permanently deletes everything installed inside it.
 
 ## Windows Steam
 
-exeLauncher is designed to use the **Windows version of Steam inside Wine**, not the macOS Steam client.
-
-The app downloads Valve's current `SteamSetup.exe` on demand from Valve's Steam CDN and stores it under:
+exeLauncher downloads Valve's Windows Steam installer on demand from Valve's CDN. It is stored at:
 
 ```
 ~/Library/Application Support/exeLauncher/Installers/SteamSetup.exe
 ```
 
-The installer is deliberately not committed to this Git repository. This keeps the repository small and means users download the current installer directly from Valve.
+Steam installation into a bottle and game launching are not connected yet. exeLauncher does not collect Steam passwords, Steam Guard codes, or session cookies.
 
-Official Steam download page: https://store.steampowered.com/about/
+## Build
 
-The Windows Steam client will be installed into its own Wine prefix when Wine integration is implemented. Steam authentication will be handled by Steam itself. exeLauncher will not collect or store Steam passwords, Steam Guard codes, or session cookies.
-
-## Build on macOS
-
-Requirements:
-
-- macOS 14 or later.
-- Xcode 15 or later, or a compatible Swift toolchain.
-
-Open the repository folder in Xcode, or build from Terminal:
+Requirements: macOS 14 or later and Xcode 15 or a compatible Swift toolchain.
 
 ```sh
 swift build
@@ -45,20 +53,20 @@ swift run
 
 ## Roadmap
 
-- [x] Initial SwiftUI app and library.
+- [x] Initial SwiftUI app and local game library.
 - [x] Import standalone Windows `.exe` files.
-- [x] Download the official Windows Steam installer.
-- [ ] Wine runtime manager.
-- [ ] Create and manage isolated Wine prefixes.
-- [ ] Install Windows Steam into a dedicated prefix.
-- [ ] Launch Steam and standalone games through Wine.
-- [ ] DXVK and D3DMetal compatibility options.
+- [x] Download official Windows Steam installer.
+- [x] Select an installed Wine runtime.
+- [x] Create and manage isolated Wine prefixes.
+- [ ] Install Windows Steam into a dedicated bottle.
+- [ ] Launch standalone games through a selected bottle.
+- [ ] DXMT and DXVK graphics options.
 - [ ] Per-game configuration and logs.
 
-## Important
+## Compatibility
 
-Importing an `.exe` file does not make it runnable by itself. A compatible Windows runtime is required. Some games, especially games using kernel-level anti-cheat, may not work in Wine.
+Wine does not run every Windows program. Games with kernel-level anti-cheat often do not work. Graphics compatibility depends on the game, Wine build, macOS version, and translation layer.
 
 ## License
 
-License not selected yet.
+License not selected yet. Wine is a separate upstream project with its own license and notices.
