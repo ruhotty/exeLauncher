@@ -322,11 +322,13 @@ enum WinetricksInstaller {
         try fileManager.createDirectory(at: scriptPath.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         if !fileManager.fileExists(atPath: scriptPath.path) {
-            let (data, response) = try Data(contentsOf: scriptURL, options: .mappedIfSafe)
-                .withResponse()
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let data: Data
+            do {
+                data = try Data(contentsOf: scriptURL, options: .mappedIfSafe)
+            } catch {
                 throw DependencyError.downloadFailed
             }
+            guard !data.isEmpty else { throw DependencyError.downloadFailed }
             try data.write(to: scriptPath, options: .atomic)
         }
 
@@ -372,25 +374,6 @@ enum WinetricksInstaller {
                     : "Winetricks could not install the common Windows dependencies: " + details
             }
         }
-    }
-}
-
-private extension Data {
-    func withResponse() throws -> (Data, URLResponse) {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<(Data, URLResponse), Error>!
-        URLSession.shared.dataTask(with: WinetricksInstaller.scriptURL) { data, response, error in
-            if let error {
-                result = .failure(error)
-            } else if let data, let response {
-                result = .success((data, response))
-            } else {
-                result = .failure(URLError(.badServerResponse))
-            }
-            semaphore.signal()
-        }.resume()
-        semaphore.wait()
-        return try result.get()
     }
 }
 
