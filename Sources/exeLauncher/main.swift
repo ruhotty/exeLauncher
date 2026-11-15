@@ -827,7 +827,9 @@ struct BottlesView: View {
     @State private var bottlePendingDeletion: Bottle?
 
     private var runtimeReady: Bool {
-        WineRuntime.wineExecutable != nil && WineRuntime.winebootExecutable != nil
+        WineRuntime.selectedAppURL?.lastPathComponent == "MetalSharp-Wine.app" &&
+        WineRuntime.wineExecutable != nil &&
+        WineRuntime.winebootExecutable != nil
     }
 
     var body: some View {
