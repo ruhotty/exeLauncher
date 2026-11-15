@@ -155,7 +155,7 @@ struct LauncherView: View {
         }
         .fileImporter(
             isPresented: $showingFileImporter,
-            allowedContentTypes: [.item],
+            allowedContentTypes: [UTType(filenameExtension: "exe") ?? .data],
             allowsMultipleSelection: false
         ) { result in
             importGame(result)
@@ -263,6 +263,10 @@ struct LauncherView: View {
     private func importGame(_ result: Result<URL, Error>) {
         do {
             let sourceURL = try result.get()
+            guard sourceURL.pathExtension.lowercased() == "exe" else {
+                showError("Please select a Windows .exe file.")
+                return
+            }
             let hasAccess = sourceURL.startAccessingSecurityScopedResource()
             defer {
                 if hasAccess {
