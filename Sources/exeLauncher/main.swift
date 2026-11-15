@@ -337,8 +337,17 @@ enum CabextractInstaller {
     }
 
     static func installIfNeeded() async throws -> URL {
-        if FileManager.default.isExecutableFile(atPath: executableURL.path) {
+        let existingAttributes = try? FileManager.default.attributesOfItem(atPath: executableURL.path)
+        let existingType = existingAttributes?[.type] as? FileAttributeType
+        if FileManager.default.isExecutableFile(atPath: executableURL.path),
+           existingType != .typeSymbolicLink {
             return executableURL
+        }
+
+        // Reinstall old Homebrew symlinks from earlier builds. Those links can
+        // point into a temporary Cellar path that no longer exists.
+        if existingType == .typeSymbolicLink {
+            try? FileManager.default.removeItem(at: installDirectory)
         }
 
         var metadataRequest = URLRequest(url: formulaURL)
