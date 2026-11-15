@@ -47,7 +47,7 @@ A bottle contains its own Windows C: drive, registry, and installed programs. Wh
 - DirectX shader compiler runtime (`d3dcompiler_47`).
 - Microsoft core fonts (`corefonts`).
 
-These components are installed separately in each new bottle. Winetricks may require `cabextract` to be installed on the Mac. Graphics translation layers such as DXVK, DXMT and VKD3D-Proton are not installed automatically yet. They need compatible Wine/Vulkan configuration and must be selected as a graphics route rather than blindly mixed together.
+These components are installed separately in each new bottle. exeLauncher also downloads a compatible Homebrew cabextract binary, verifies its SHA-256 checksum, and keeps it inside its own Runtime folder. It does not require Homebrew to be installed on the Mac. Graphics translation layers such as DXVK, DXMT and VKD3D-Proton are not installed automatically yet. They need compatible Wine/Vulkan configuration and must be selected as a graphics route rather than blindly mixed together.
 
 Deleting a bottle permanently deletes everything installed inside it.
 
