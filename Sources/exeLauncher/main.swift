@@ -892,8 +892,9 @@ struct LauncherView: View {
                    let existingBottle = BottleStore.load().first(where: { $0.id == existingID }) {
                     bottle = existingBottle
                 } else {
+                    let bottleName = game.name
                     bottle = try await Task.detached(priority: .userInitiated) {
-                        try await BottleManager.create(name: game.name, runtimeApp: runtimeApp)
+                        try await BottleManager.create(name: bottleName, runtimeApp: runtimeApp)
                     }.value
                     game.bottleID = bottle.id
                     if let index = games.firstIndex(where: { $0.id == game.id }) {
