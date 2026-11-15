@@ -18,7 +18,7 @@ exeLauncher does not bundle Wine in this repository. Install the Wine Staging 11
 
 https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.16
 
-The upstream packages are distributed as `.tar.xz` archives containing a Wine app bundle. Extract the archive, move the Wine app to Applications, then select that app in exeLauncher under Bottles.
+The upstream packages are distributed as `.tar.xz` archives containing a Wine app bundle. Extract the archive, move the Wine app to Applications, then select that app in exeLauncher under Bottles. The 11.16 release notes also list GStreamer.framework as a system requirement. Install it if it is not already present.
 
 The upstream package documents macOS Catalina or newer as supported and includes shared Wine Gecko and Mono components. Check the upstream release notes for current requirements.
 
