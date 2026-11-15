@@ -422,7 +422,7 @@ struct BottlesView: View {
                 Section("Wine runtime") {
                     HStack {
                         Image(systemName: runtimeReady ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(runtimeReady ? .green : .secondary)
+                            .foregroundStyle(runtimeReady ? Color.green : Color.secondary)
                         VStack(alignment: .leading) {
                             Text(runtimeReady ? "Wine is ready" : "Wine not configured")
                             Text(runtimeApp?.lastPathComponent ?? "No Wine app selected")
