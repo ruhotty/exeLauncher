@@ -519,14 +519,30 @@ enum WinetricksInstaller {
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [scriptPath.path, "-q", "corefonts", "vcrun2022", "d3dcompiler_47"]
 
+        // Put cabextract at a predictable path. Homebrew bottles can contain
+        // versioned nested directories, so do not rely on the archive's layout.
+        guard fileManager.isExecutableFile(atPath: cabextractURL.path) else {
+            throw DependencyError.cabextractNotExecutable(cabextractURL.path)
+        }
+        let dependenciesDirectory = scriptPath.deletingLastPathComponent()
+        let toolsDirectory = dependenciesDirectory.appendingPathComponent("bin", isDirectory: true)
+        try fileManager.createDirectory(at: toolsDirectory, withIntermediateDirectories: true)
+        let stableCabextractURL = toolsDirectory.appendingPathComponent("cabextract")
+        if fileManager.fileExists(atPath: stableCabextractURL.path) ||
+            (try? fileManager.destinationOfSymbolicLink(atPath: stableCabextractURL.path)) != nil {
+            try fileManager.removeItem(at: stableCabextractURL)
+        }
+        try fileManager.createSymbolicLink(at: stableCabextractURL, withDestinationURL: cabextractURL)
+
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "WINEARCH")
         environment["WINEPREFIX"] = prefix.path
-                environment["WINE"] = wine.path
+        environment["WINE"] = wine.path
         environment["WINELOADER"] = wine.path
         environment["WINEDEBUG"] = "-all"
+        environment["CABEXTRACT"] = stableCabextractURL.path
         let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        environment["PATH"] = cabextractURL.deletingLastPathComponent().path + ":" + existingPath
+        environment["PATH"] = toolsDirectory.path + ":" + cabextractURL.deletingLastPathComponent().path + ":" + existingPath
         process.environment = environment
 
         let output = Pipe()
@@ -546,6 +562,7 @@ enum WinetricksInstaller {
     enum DependencyError: LocalizedError {
         case wineNotFound
         case downloadFailed
+        case cabextractNotExecutable(String)
         case installationFailed(String)
 
         var errorDescription: String? {
@@ -554,6 +571,8 @@ enum WinetricksInstaller {
                 return "Wine was not found, so the bottle dependencies could not be installed."
             case .downloadFailed:
                 return "Could not download the official Winetricks script."
+            case .cabextractNotExecutable(let path):
+                return "cabextract was not executable at the expected path: " + path
             case .installationFailed(let details):
                 return details.isEmpty
                     ? "Winetricks could not install the common Windows dependencies. Check that cabextract is installed."
