@@ -7,31 +7,30 @@ A native SwiftUI macOS launcher for Windows games, built Apple Silicon first.
 - Native SwiftUI interface with Liquid Glass styling on supported macOS versions.
 - Local game library and standalone `.exe` import.
 - Downloader for Valve's official Windows Steam installer.
-- One-click installer for Wine Staging 11.21.
-- Wine Staging 11.21 package includes GStreamer.framework, Wine Gecko, and Wine Mono.
+- One-click installer for the native Apple Silicon MetalSharp Wine runtime.
+- MetalSharp Wine bundles Mullion (DXMT-based Direct3D 10/11/12), DXVK, VKD3D-Proton, MoltenVK, Wine Mono, Gecko, and core fonts.
 - Create, list, inspect, and delete isolated Wine bottles.
 
 Game launching and graphics translation layers are still in development.
 
 ## Install Dependencies
 
-Open the Bottles tab and click **Install Dependencies**. exeLauncher retrieves the Wine Staging 11.21 release metadata from the official Gcenx/macOS_Wine_builds GitHub release, downloads the macOS staging archive, extracts it, and installs the Wine app bundle under:
+Open the Bottles tab and click **Download Dependencies**. exeLauncher retrieves the latest Apple Silicon FEX package from the official MetalSharp-Wine GitHub releases, downloads the ZIP, extracts it with macOS `ditto`, and installs the Wine app bundle under:
 
 ```
 ~/Library/Application Support/exeLauncher/Runtime/
 ```
 
-GStreamer.framework v1.28.1 is included in this Wine release, so it does not need a separate installer. Wine Gecko and Wine Mono are also included in the package.
+The native arm64 runtime runs x86 and x86_64 Windows programs through FEX and does not require Rosetta. It includes the graphics components used by MetalSharp Wine:
 
-This Wine build uses x86_64 components. Apple Silicon Macs need Rosetta 2. exeLauncher checks for Rosetta before downloading. If it is missing, install it in Terminal:
+- Mullion, a DXMT-based Metal backend for Direct3D 10, 11 and 12.
+- DXVK-MacOS for Direct3D 8, 9, 10 and 11.
+- VKD3D-Proton-MacOS for Direct3D 12, with its matching DXVK and custom MoltenVK runtime.
+- WineMetalGL for OpenGL.
 
-```sh
-softwareupdate --install-rosetta
-```
+The runtime is downloaded directly from the upstream release and is not committed to this repository. exeLauncher does not silently remove macOS quarantine flags or bypass Gatekeeper.
 
-The runtime is downloaded directly from the upstream release and is not committed to this repository. The app does not silently remove macOS quarantine flags or bypass Gatekeeper.
-
-Upstream release: https://github.com/Gcenx/macOS_Wine_builds/releases/tag/11.21
+Upstream: https://github.com/metalsharp/MetalSharp-Wine
 
 ## Bottles
 
@@ -47,7 +46,7 @@ A bottle contains its own Windows C: drive, registry, and installed programs. Wh
 - DirectX shader compiler runtime (`d3dcompiler_47`).
 - Microsoft core fonts (`corefonts`).
 
-These components are installed separately in each new bottle. exeLauncher also downloads a compatible Homebrew cabextract binary, verifies its SHA-256 checksum, and keeps it inside its own Runtime folder. It does not require Homebrew to be installed on the Mac. Graphics translation layers such as DXVK, DXMT and VKD3D-Proton are not installed automatically yet. They need compatible Wine/Vulkan configuration and must be selected as a graphics route rather than blindly mixed together.
+These components are installed separately in each new bottle. exeLauncher also downloads a compatible Homebrew cabextract binary, verifies its SHA-256 checksum, and keeps it inside its own Runtime folder. It does not require Homebrew to be installed on the Mac. Graphics translation layers are supplied by the selected MetalSharp Wine runtime. They must be selected as compatible graphics routes; exeLauncher does not yet automatically detect a game's Direct3D API or launch games.
 
 Deleting a bottle permanently deletes everything installed inside it.
 
@@ -75,11 +74,11 @@ swift run
 - [x] Initial SwiftUI app and local game library.
 - [x] Import standalone Windows `.exe` files.
 - [x] Download official Windows Steam installer.
-- [x] One-click Wine Staging and bundled dependency installer.
+- [x] One-click MetalSharp Wine installer with bundled graphics backends.
 - [x] Create and manage isolated Wine prefixes.
 - [ ] Install Windows Steam into a dedicated bottle.
 - [ ] Launch standalone games through a selected bottle.
-- [ ] DXMT and DXVK graphics options.
+- [ ] Automatic per-game graphics route detection and launch.
 - [ ] Per-game configuration and logs.
 
 ## Compatibility
