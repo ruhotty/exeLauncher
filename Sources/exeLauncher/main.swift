@@ -1048,7 +1048,9 @@ struct LauncherView: View {
         steamStatus = "Creating the separate Steam bottle and opening the Steam installer."
         Task {
             do {
-                let (bottle, process) = try await SteamManager.install(runtimeApp: runtimeApp)
+                let (bottle, process) = try await Task.detached(priority: .userInitiated) {
+                    try await SteamManager.install(runtimeApp: runtimeApp)
+                }.value
                 launchedProcesses.append(process)
                 steamInstallerPath = SteamInstaller.installerURL.path
                 steamStatus = "Steam installer opened in the dedicated '(bottle.name)' bottle. Finish the installation window, then click Launch Steam."
