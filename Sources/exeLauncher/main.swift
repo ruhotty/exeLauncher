@@ -339,8 +339,9 @@ enum CabextractInstaller {
     static func installIfNeeded() async throws -> URL {
         let existingAttributes = try? FileManager.default.attributesOfItem(atPath: executableURL.path)
         let existingType = existingAttributes?[.type] as? FileAttributeType
-        if FileManager.default.isExecutableFile(atPath: executableURL.path),
-           existingType != .typeSymbolicLink {
+        let existingIsRegularFile = existingType == .typeRegular
+        if existingIsRegularFile,
+           FileManager.default.isExecutableFile(atPath: executableURL.path) {
             return executableURL
         }
 
@@ -489,11 +490,25 @@ enum CabextractInstaller {
     }
 
     private static func findCabextract(in directory: URL) -> URL? {
-        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles]
+        ) else {
             return nil
         }
+
+        // Directories can have execute permissions too. Only accept a regular
+        // file named cabextract, never the Homebrew Cellar directory itself.
         for case let url as URL in enumerator where url.lastPathComponent == "cabextract" {
-            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+            guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                  values.isRegularFile == true,
+                  values.isDirectory != true,
+                  FileManager.default.isExecutableFile(atPath: url.path) else {
+                continue
+            }
+            return url
         }
         return nil
     }
