@@ -11,7 +11,7 @@ A native SwiftUI macOS launcher for Windows games, built Apple Silicon first.
 - MetalSharp Wine bundles Mullion (DXMT-based Direct3D 10/11/12), DXVK, VKD3D-Proton, MoltenVK, Wine Mono, Gecko, and core fonts.
 - Create, list, inspect, and delete isolated Wine bottles.
 
-Game launching and graphics translation layers are still in development.
+Standalone executable launching is connected to per-game bottles. Graphics routes are selected automatically from Direct3D DLL references when those references are present in the executable.
 
 ## Install Dependencies
 
@@ -58,11 +58,11 @@ exeLauncher downloads Valve's Windows Steam installer on demand from Valve's CDN
 ~/Library/Application Support/exeLauncher/Installers/SteamSetup.exe
 ```
 
-Steam installation into a bottle and game launching are not connected yet. exeLauncher does not collect Steam passwords, Steam Guard codes, or session cookies.
+Steam installation into a bottle is not connected yet. Standalone imported executables can be launched with the Play button. exeLauncher does not collect Steam passwords, Steam Guard codes, or session cookies.
 
 ## Build
 
-Requirements: macOS 14 or later and Xcode 15 or a compatible Swift toolchain.
+Requirements: Apple Silicon Mac with macOS 15 or later and Xcode 15 or a compatible Swift toolchain.
 
 ```sh
 swift build
@@ -77,8 +77,8 @@ swift run
 - [x] One-click MetalSharp Wine installer with bundled graphics backends.
 - [x] Create and manage isolated Wine prefixes.
 - [ ] Install Windows Steam into a dedicated bottle.
-- [ ] Launch standalone games through a selected bottle.
-- [ ] Automatic per-game graphics route detection and launch.
+- [x] Launch standalone executables through automatically created per-game bottles.
+- [x] Basic automatic graphics route selection for Direct3D 8/9 and 12, with Mullion as the default for Direct3D 10/11.
 - [ ] Per-game configuration and logs.
 
 ## Compatibility
