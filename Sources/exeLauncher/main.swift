@@ -1304,7 +1304,8 @@ struct LauncherView: View {
         Task {
             do {
                 var game = selectedGame
-                let bottle: Bottle                if let existingID = game.bottleID,
+                let bottle: Bottle
+                if let existingID = game.bottleID,
                    let existingBottle = BottleStore.load().first(where: { $0.id == existingID }) {
                     bottle = existingBottle
                 } else {
