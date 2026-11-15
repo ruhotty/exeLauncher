@@ -52,13 +52,17 @@ Deleting a bottle permanently deletes everything installed inside it.
 
 ## Windows Steam
 
-exeLauncher downloads Valve's Windows Steam installer on demand from Valve's CDN. It is stored at:
+The home screen has an **Install Steam** action. exeLauncher creates a dedicated Steam bottle, downloads Valve's official Windows Steam installer, and opens it through MetalSharp Wine. Complete the setup in the Wine window. Later, use **Launch Steam** to open the existing installation.
+
+The Steam Library page reads installed game manifests from that bottle, lists detected games, and starts a selected game through Steam using its AppID. Install or update games inside Steam, then click **Refresh** in the Steam Library page.
+
+The installer is stored at:
 
 ```
 ~/Library/Application Support/exeLauncher/Installers/SteamSetup.exe
 ```
 
-Steam installation into a bottle is not connected yet. Standalone imported executables can be launched with the Play button. exeLauncher does not collect Steam passwords, Steam Guard codes, or session cookies.
+exeLauncher does not collect Steam passwords, Steam Guard codes, or session cookies. Steam and individual games may not work with Wine. The current scanner detects games in the default Steam library inside the dedicated bottle; additional Steam library folders are not scanned yet.
 
 ## Build
 
@@ -76,10 +80,10 @@ swift run
 - [x] Download official Windows Steam installer.
 - [x] One-click MetalSharp Wine installer with bundled graphics backends.
 - [x] Create and manage isolated Wine prefixes.
-- [ ] Install Windows Steam into a dedicated bottle.
+- [x] Install Windows Steam into a dedicated bottle and launch it.
 - [x] Launch standalone executables through automatically created per-game bottles.
 - [x] Basic automatic graphics route selection for Direct3D 8/9 and 12, with Mullion as the default for Direct3D 10/11.
-- [ ] Per-game configuration and logs.
+- [x] Detect installed games in the default Steam library and launch them through Steam AppIDs.\n- [ ] Additional Steam library folders, per-game configuration and logs.
 
 ## Compatibility
 
