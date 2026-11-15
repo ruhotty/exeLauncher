@@ -883,6 +883,8 @@ struct LauncherView: View {
                 } label: {
                     Label("All Games", systemImage: "square.grid.2x2")
                         .foregroundStyle(selectedSection == .library && selectedGameID == nil ? Color.accentColor : Color.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -893,6 +895,8 @@ struct LauncherView: View {
                     } label: {
                         Label(game.name, systemImage: "gamecontroller")
                             .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -910,6 +914,8 @@ struct LauncherView: View {
                 } label: {
                     Label("Steam Library", systemImage: "steam")
                         .foregroundStyle(selectedSection == .steam ? Color.accentColor : Color.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -919,6 +925,8 @@ struct LauncherView: View {
                 } label: {
                     Label("Bottles", systemImage: "shippingbox")
                         .foregroundStyle(selectedSection == .bottles ? Color.accentColor : Color.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
