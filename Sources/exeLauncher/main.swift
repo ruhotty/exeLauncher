@@ -152,9 +152,11 @@ enum WineRuntime {
         return executable(named: "wine", in: app) ?? executable(named: "wine64", in: app)
     }
 
+    // MetalSharp's current bundle exposes Wine's main executable. Its
+    // documented setup command is "wine wineboot -i", not a separate
+    // wineboot binary.
     static var winebootExecutable: URL? {
-        guard let app = selectedAppURL else { return nil }
-        return executable(named: "wineboot", in: app)
+        wineExecutable
     }
 }
 
@@ -233,8 +235,7 @@ enum WineRuntimeInstaller {
         }
         try fileManager.copyItem(at: appBundle, to: destination)
 
-        guard WineRuntime.executable(named: "wine", in: destination) != nil,
-              WineRuntime.executable(named: "wineboot", in: destination) != nil else {
+        guard WineRuntime.executable(named: "wine", in: destination) != nil else {
             try? fileManager.removeItem(at: destination)
             throw InstallerError.invalidWineBundle
         }
