@@ -11,8 +11,14 @@ final class ExeLauncherAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum ExeLauncherProcessRegistry {
+    private struct WinePrefix {
+        let directory: URL
+        let runtimeApp: URL
+    }
+
     private static let lock = NSLock()
     private static var processes: [Process] = []
+    private static var winePrefixes: [String: WinePrefix] = [:]
 
     static func register(_ process: Process) {
         lock.lock()
@@ -21,14 +27,77 @@ enum ExeLauncherProcessRegistry {
         lock.unlock()
     }
 
+    static func registerWinePrefix(prefix: URL, runtimeApp: URL) {
+        lock.lock()
+        winePrefixes[prefix.standardizedFileURL.path] = WinePrefix(
+            directory: prefix.standardizedFileURL,
+            runtimeApp: runtimeApp
+        )
+        lock.unlock()
+    }
+
     static func terminateAll() {
         lock.lock()
         let runningProcesses = processes.filter { $0.isRunning }
+        let prefixes = Array(winePrefixes.values)
         processes.removeAll()
+        winePrefixes.removeAll()
         lock.unlock()
 
+        // Ask each Wine server to close every Windows process in its bottle.
+        // This also catches Steam and game processes that Wine detached from
+        // the original Process object.
+        for prefix in prefixes {
+            guard let wineserver = WineRuntime.executable(named: "wineserver", in: prefix.runtimeApp) else {
+                continue
+            }
+            let shutdown = Process()
+            shutdown.executableURL = wineserver
+            shutdown.arguments = ["-k"]
+            var environment = ProcessInfo.processInfo.environment
+            environment["WINEPREFIX"] = prefix.directory.path
+            environment["WINE"] = WineRuntime.executable(named: "wine", in: prefix.runtimeApp)?.path
+            environment["WINELOADER"] = environment["WINE"]
+            environment["WINEDEBUG"] = "-all"
+            shutdown.environment = environment
+            do {
+                try shutdown.run()
+                shutdown.waitUntilExit()
+            } catch {
+                NSLog("exeLauncher: could not stop Wine bottle %@: %@", prefix.directory.path, error.localizedDescription)
+            }
+        }
+
+        // Stop every tracked process and its descendants, including helper
+        // processes started by Winetricks or other launcher tasks.
+        let script = """
+        terminate_tree() {
+            for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
+                terminate_tree "$child"
+            done
+            /bin/kill -TERM "$1" 2>/dev/null || true
+        }
+        force_tree() {
+            for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
+                force_tree "$child"
+            done
+            /bin/kill -KILL "$1" 2>/dev/null || true
+        }
+        terminate_tree "$1"
+        /bin/sleep 1
+        force_tree "$1"
+        """
+
         for process in runningProcesses {
-            process.terminate()
+            let treeTerminator = Process()
+            treeTerminator.executableURL = URL(fileURLWithPath: "/bin/bash")
+            treeTerminator.arguments = ["-c", script, "exeLauncher-shutdown", String(process.processIdentifier)]
+            do {
+                try treeTerminator.run()
+                treeTerminator.waitUntilExit()
+            } catch {
+                process.terminate()
+            }
         }
     }
 }
@@ -655,6 +724,7 @@ enum WinetricksInstaller {
         process.standardOutput = output
         process.standardError = output
 
+        ExeLauncherProcessRegistry.registerWinePrefix(prefix: prefix, runtimeApp: runtimeApp)
         try process.run()
         ExeLauncherProcessRegistry.register(process)
         let outputData = output.fileHandleForReading.readDataToEndOfFile()
@@ -837,6 +907,7 @@ enum GameLauncher {
         }
 
         process.environment = environment
+        ExeLauncherProcessRegistry.registerWinePrefix(prefix: bottle.directoryURL, runtimeApp: runtimeApp)
         try process.run()
         ExeLauncherProcessRegistry.register(process)
         return (process, backend)
@@ -983,6 +1054,7 @@ enum SteamManager {
         environment["WINELOADER"] = wine.path
         environment["WINEDEBUG"] = "-all"
         process.environment = environment
+        ExeLauncherProcessRegistry.registerWinePrefix(prefix: bottle.directoryURL, runtimeApp: runtimeApp)
         try process.run()
         ExeLauncherProcessRegistry.register(process)
         return process
