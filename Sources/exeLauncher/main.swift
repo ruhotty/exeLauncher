@@ -260,9 +260,10 @@ struct LauncherView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func importGame(_ result: Result<URL, Error>) {
+    private func importGame(_ result: Result<[URL], Error>) {
         do {
-            let sourceURL = try result.get()
+            let selectedURLs = try result.get()
+            guard let sourceURL = selectedURLs.first else { return }
             guard sourceURL.pathExtension.lowercased() == "exe" else {
                 showError("Please select a Windows .exe file.")
                 return
