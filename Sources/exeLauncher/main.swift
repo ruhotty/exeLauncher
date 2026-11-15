@@ -303,6 +303,97 @@ enum WineRuntimeInstaller {
     }
 }
 
+enum WinetricksInstaller {
+    static let scriptURL = URL(string: "https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks")!
+
+    static var scriptPath: URL {
+        WineRuntime.installDirectory
+            .appendingPathComponent("Dependencies", isDirectory: true)
+            .appendingPathComponent("winetricks")
+    }
+
+    static func installCommonDependencies(prefix: URL, runtimeApp: URL) throws {
+        guard let wine = WineRuntime.executable(named: "wine", in: runtimeApp)
+                ?? WineRuntime.executable(named: "wine64", in: runtimeApp) else {
+            throw DependencyError.wineNotFound
+        }
+
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: scriptPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        if !fileManager.fileExists(atPath: scriptPath.path) {
+            let (data, response) = try Data(contentsOf: scriptURL, options: .mappedIfSafe)
+                .withResponse()
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                throw DependencyError.downloadFailed
+            }
+            try data.write(to: scriptPath, options: .atomic)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptPath.path, "-q", "corefonts", "vcrun2022", "d3dcompiler_47"]
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["WINEPREFIX"] = prefix.path
+        environment["WINEARCH"] = "win64"
+        environment["WINE"] = wine.path
+        environment["WINELOADER"] = wine.path
+        environment["WINEDEBUG"] = "-all"
+        process.environment = environment
+
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let details = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw DependencyError.installationFailed(details)
+        }
+    }
+
+    enum DependencyError: LocalizedError {
+        case wineNotFound
+        case downloadFailed
+        case installationFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .wineNotFound:
+                return "Wine was not found, so the bottle dependencies could not be installed."
+            case .downloadFailed:
+                return "Could not download the official Winetricks script."
+            case .installationFailed(let details):
+                return details.isEmpty
+                    ? "Winetricks could not install the common Windows dependencies. Check that cabextract is installed."
+                    : "Winetricks could not install the common Windows dependencies: " + details
+            }
+        }
+    }
+}
+
+private extension Data {
+    func withResponse() throws -> (Data, URLResponse) {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<(Data, URLResponse), Error>!
+        URLSession.shared.dataTask(with: WinetricksInstaller.scriptURL) { data, response, error in
+            if let error {
+                result = .failure(error)
+            } else if let data, let response {
+                result = .success((data, response))
+            } else {
+                result = .failure(URLError(.badServerResponse))
+            }
+            semaphore.signal()
+        }.resume()
+        semaphore.wait()
+        return try result.get()
+    }
+}
+
 enum BottleManager {
     static func create(name: String, runtimeApp: URL) throws -> Bottle {
         guard let wineboot = WineRuntime.executable(named: "wineboot", in: runtimeApp) else {
@@ -343,6 +434,13 @@ enum BottleManager {
             let detail = String(data: data, encoding: .utf8) ?? ""
             try? FileManager.default.removeItem(at: bottle.directoryURL)
             throw BottleError.initializationFailed(detail)
+        }
+
+        do {
+            try WinetricksInstaller.installCommonDependencies(prefix: bottle.directoryURL, runtimeApp: runtimeApp)
+        } catch {
+            try? FileManager.default.removeItem(at: bottle.directoryURL)
+            throw error
         }
 
         try BottleStore.save(BottleStore.load() + [bottle])
