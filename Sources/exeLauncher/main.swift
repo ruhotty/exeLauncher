@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import CryptoKit
 
 @main
 struct exeLauncherApp: App {
@@ -303,6 +304,144 @@ enum WineRuntimeInstaller {
     }
 }
 
+enum CabextractInstaller {
+    private static let formulaURL = URL(string: "https://formulae.brew.sh/api/formula/cabextract.json")!
+
+    static var installDirectory: URL {
+        WineRuntime.installDirectory
+            .appendingPathComponent("Dependencies", isDirectory: true)
+            .appendingPathComponent("cabextract", isDirectory: true)
+    }
+
+    static var executableURL: URL {
+        installDirectory.appendingPathComponent("bin/cabextract")
+    }
+
+    static func installIfNeeded() async throws -> URL {
+        if FileManager.default.isExecutableFile(atPath: executableURL.path) {
+            return executableURL
+        }
+
+        var request = URLRequest(url: formulaURL)
+        request.setValue("exeLauncher", forHTTPHeaderField: "User-Agent")
+        let (metadata, metadataResponse) = try await URLSession.shared.data(for: request)
+        guard let metadataHTTP = metadataResponse as? HTTPURLResponse,
+              (200...299).contains(metadataHTTP.statusCode),
+              let formula = try JSONSerialization.jsonObject(with: metadata) as? [String: Any],
+              let bottle = formula["bottle"] as? [String: Any],
+              let stable = bottle["stable"] as? [String: Any],
+              let files = stable["files"] as? [String: Any] else {
+            throw InstallerError.metadataUnavailable
+        }
+
+        let tag = bottleTag()
+        guard let selected = files[tag] as? [String: Any],
+              let urlString = selected["url"] as? String,
+              let expectedSHA = selected["sha256"] as? String,
+              let downloadURL = URL(string: urlString) else {
+            throw InstallerError.unsupportedMac
+        }
+
+        let (archiveURL, response) = try await URLSession.shared.download(from: downloadURL)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw InstallerError.downloadFailed
+        }
+
+        let archiveData = try Data(contentsOf: archiveURL)
+        let actualSHA = SHA256.hash(data: archiveData).map { String(format: "%02x", $0) }.joined()
+        guard actualSHA.caseInsensitiveCompare(expectedSHA) == .orderedSame else {
+            throw InstallerError.checksumMismatch
+        }
+
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("exeLauncher-cabextract-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+        let archive = temporaryDirectory.appendingPathComponent("cabextract.tar.gz")
+        try fileManager.moveItem(at: archiveURL, to: archive)
+
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tar.arguments = ["-xzf", archive.path, "-C", temporaryDirectory.path]
+        let errors = Pipe()
+        tar.standardError = errors
+        try tar.run()
+        tar.waitUntilExit()
+        guard tar.terminationStatus == 0 else {
+            let detail = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw InstallerError.extractionFailed(detail)
+        }
+
+        guard let found = findCabextract(in: temporaryDirectory) else {
+            throw InstallerError.executableNotFound
+        }
+
+        try fileManager.createDirectory(at: installDirectory.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if fileManager.fileExists(atPath: installDirectory.path) {
+            try fileManager.removeItem(at: installDirectory)
+        }
+        try fileManager.createDirectory(at: installDirectory, withIntermediateDirectories: true)
+        let binDirectory = installDirectory.appendingPathComponent("bin", isDirectory: true)
+        try fileManager.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        try fileManager.copyItem(at: found, to: executableURL)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+        return executableURL
+    }
+
+    private static func bottleTag() -> String {
+        #if arch(arm64)
+        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        let codename: String
+        switch major {
+        case 27...: codename = "golden_gate"
+        case 26: codename = "tahoe"
+        case 15: codename = "sequoia"
+        case 14: codename = "sonoma"
+        case 13: codename = "ventura"
+        case 12: codename = "monterey"
+        default: codename = "big_sur"
+        }
+        return "arm64_\(codename)"
+        #else
+        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        let codename = major >= 15 ? "sonoma" : (major == 14 ? "sonoma" : (major == 13 ? "ventura" : "monterey"))
+        return codename
+        #endif
+    }
+
+    private static func findCabextract(in directory: URL) -> URL? {
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        for case let url as URL in enumerator where url.lastPathComponent == "cabextract" {
+            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+        }
+        return nil
+    }
+
+    enum InstallerError: LocalizedError {
+        case metadataUnavailable
+        case unsupportedMac
+        case downloadFailed
+        case checksumMismatch
+        case extractionFailed(String)
+        case executableNotFound
+
+        var errorDescription: String? {
+            switch self {
+            case .metadataUnavailable: return "Could not retrieve cabextract package information."
+            case .unsupportedMac: return "No compatible cabextract package was found for this Mac."
+            case .downloadFailed: return "The cabextract download failed."
+            case .checksumMismatch: return "The cabextract download failed its SHA-256 check."
+            case .extractionFailed(let detail): return detail.isEmpty ? "Could not extract cabextract." : "Could not extract cabextract: " + detail
+            case .executableNotFound: return "The downloaded package did not contain the cabextract executable."
+            }
+        }
+    }
+}
+
 enum WinetricksInstaller {
     static let scriptURL = URL(string: "https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks")!
 
@@ -312,7 +451,7 @@ enum WinetricksInstaller {
             .appendingPathComponent("winetricks")
     }
 
-    static func installCommonDependencies(prefix: URL, runtimeApp: URL) throws {
+    static func installCommonDependencies(prefix: URL, runtimeApp: URL, cabextractURL: URL) throws {
         guard let wine = WineRuntime.executable(named: "wine", in: runtimeApp)
                 ?? WineRuntime.executable(named: "wine64", in: runtimeApp) else {
             throw DependencyError.wineNotFound
@@ -342,6 +481,8 @@ enum WinetricksInstaller {
         environment["WINE"] = wine.path
         environment["WINELOADER"] = wine.path
         environment["WINEDEBUG"] = "-all"
+        let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["PATH"] = cabextractURL.deletingLastPathComponent().path + ":" + existingPath
         process.environment = environment
 
         let output = Pipe()
@@ -379,7 +520,7 @@ enum WinetricksInstaller {
 }
 
 enum BottleManager {
-    static func create(name: String, runtimeApp: URL) throws -> Bottle {
+    static func create(name: String, runtimeApp: URL) async throws -> Bottle {
         guard let wineboot = WineRuntime.executable(named: "wineboot", in: runtimeApp) else {
             throw BottleError.winebootNotFound
         }
@@ -421,7 +562,12 @@ enum BottleManager {
         }
 
         do {
-            try WinetricksInstaller.installCommonDependencies(prefix: bottle.directoryURL, runtimeApp: runtimeApp)
+            let cabextract = try await CabextractInstaller.installIfNeeded()
+            try WinetricksInstaller.installCommonDependencies(
+                prefix: bottle.directoryURL,
+                runtimeApp: runtimeApp,
+                cabextractURL: cabextract
+            )
         } catch {
             try? FileManager.default.removeItem(at: bottle.directoryURL)
             throw error
@@ -914,7 +1060,7 @@ struct BottlesView: View {
         Task {
             do {
                 let bottle = try await Task.detached(priority: .userInitiated) {
-                    try BottleManager.create(name: name, runtimeApp: runtimeApp)
+                    try await BottleManager.create(name: name, runtimeApp: runtimeApp)
                 }.value
                 bottles.append(bottle)
                 newBottleName = ""
