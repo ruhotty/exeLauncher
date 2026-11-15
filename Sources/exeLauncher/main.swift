@@ -149,6 +149,10 @@ struct Bottle: Identifiable, Codable, Equatable {
     }
 }
 
+extension Notification.Name {
+    static let exeLauncherGamesChanged = Notification.Name("exeLauncherGamesChanged")
+}
+
 enum GameStore {
     static var directory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -447,8 +451,7 @@ enum CabextractInstaller {
         }
 
         // Reinstall old Homebrew symlinks from earlier builds. Those links can
-        // point into a temporary Cellar path that no longer exists.
-        if existingType == .typeSymbolicLink {
+        // point into a temporary Cellar path that no longer exists.        if existingType == .typeSymbolicLink {
             try? FileManager.default.removeItem(at: installDirectory)
         }
 
@@ -898,7 +901,6 @@ enum GameLauncher {
         environment["WINE"] = wine.path
         environment["WINELOADER"] = wine.path
         environment["WINEDEBUG"] = "-all"
-
         switch backend {
         case .mullion:
             environment.removeValue(forKey: "GRAPHICS_BACKEND")        case .dxvk:
@@ -1138,6 +1140,9 @@ struct LauncherView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .onReceive(NotificationCenter.default.publisher(for: .exeLauncherGamesChanged)) { _ in
+            games = GameStore.load()
+        }
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [UTType(filenameExtension: "exe") ?? .data],
@@ -1347,8 +1352,7 @@ struct LauncherView: View {
             defer { if hasAccess { sourceURL.stopAccessingSecurityScopedResource() } }
             try FileManager.default.createDirectory(at: GameStore.gamesDirectory, withIntermediateDirectories: true)
             let destination = GameStore.gamesDirectory.appendingPathComponent(sourceURL.lastPathComponent)
-            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
-            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }            try FileManager.default.copyItem(at: sourceURL, to: destination)
             let game = Game(name: sourceURL.deletingPathExtension().lastPathComponent, executablePath: destination.path)
             games.append(game)
             GameStore.save(games)
@@ -1508,6 +1512,7 @@ struct BottlesView: View {
     @State private var showingError = false
     @State private var bottlePendingDeletion: Bottle?
     @State private var isInstallingEXE = false
+    @State private var bottleReadyToAddGame: Bottle?
 
     private var runtimeReady: Bool {
         WineRuntime.selectedAppURL?.lastPathComponent == "MetalSharp-Wine.app" &&
@@ -1645,6 +1650,12 @@ struct BottlesView: View {
                                 .disabled(!runtimeReady || isInstallingEXE)
                                 .exeLauncherGlassButton()
                                 Button {
+                                    addInstalledGame(from: bottle)
+                                } label: {
+                                    Label("Add Game", systemImage: "plus")
+                                }
+                                .exeLauncherGlassButton()
+                                Button {
                                     NSWorkspace.shared.activateFileViewerSelecting([bottle.directoryURL])
                                 } label: {
                                     Image(systemName: "folder")
@@ -1767,7 +1778,8 @@ struct BottlesView: View {
         }
 
         isInstallingEXE = true
-        statusMessage = "Preparing installer for bottle '\(bottle.name)'."
+        statusMessage = "Copying installer and preparing bottle '(bottle.name)'."
+        let hasSecurityScope = selectedURL.startAccessingSecurityScopedResource()
 
         Task {
             do {
@@ -1778,11 +1790,10 @@ struct BottlesView: View {
                     try GameStore.prepareWritableDirectory(installerDirectory)
                     let destination = installerDirectory
                         .appendingPathComponent(UUID().uuidString + "-" + selectedURL.lastPathComponent)
-                    let hasAccess = selectedURL.startAccessingSecurityScopedResource()
-                    defer { if hasAccess { selectedURL.stopAccessingSecurityScopedResource() } }
                     try FileManager.default.copyItem(at: selectedURL, to: destination)
                     return destination
                 }.value
+                if hasSecurityScope { selectedURL.stopAccessingSecurityScopedResource() }
 
                 let process = Process()
                 process.executableURL = wine
@@ -1798,15 +1809,60 @@ struct BottlesView: View {
                 process.environment = environment
 
                 ExeLauncherProcessRegistry.registerWinePrefix(prefix: bottle.directoryURL, runtimeApp: runtimeApp)
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
                 try process.run()
                 ExeLauncherProcessRegistry.register(process)
-                statusMessage = "Installer started in bottle '\(bottle.name)'. Complete the setup window."
+                bottleReadyToAddGame = bottle
+                statusMessage = "Installer started in bottle '\(bottle.name)'. Finish installing it, then click Add Game and choose the game's main .exe from the bottle's C: drive."
             } catch {
+                if hasSecurityScope { selectedURL.stopAccessingSecurityScopedResource() }
                 showError("Could not start the installer: " + error.localizedDescription)
                 statusMessage = nil
             }
             isInstallingEXE = false
         }
+    }
+
+    private func addInstalledGame(from bottle: Bottle) {
+        let driveC = bottle.directoryURL.appendingPathComponent("drive_c", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: driveC.path) else {
+            showError("This bottle does not have a Windows C: drive yet. Run the installer first.")
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Choose the installed game's executable"
+        panel.message = "Select the game's main .exe inside the (bottle.name) bottle."
+        panel.prompt = "Add to Library"
+        panel.directoryURL = driveC
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "exe") ?? .data]
+
+        guard panel.runModal() == .OK, let executableURL = panel.url else { return }
+        guard executableURL.pathExtension.lowercased() == "exe",
+              executableURL.standardizedFileURL.path.hasPrefix(driveC.standardizedFileURL.path + "/") else {
+            showError("Choose an .exe file located inside this bottle's C: drive.")
+            return
+        }
+
+        var game = Game(
+            name: executableURL.deletingPathExtension().lastPathComponent,
+            executablePath: executableURL.path,
+            source: "Bottle: (bottle.name)"
+        )
+        game.bottleID = bottle.id
+
+        var games = GameStore.load()
+        if !games.contains(where: { $0.executablePath == game.executablePath }) {
+            games.append(game)
+            GameStore.save(games)
+            NotificationCenter.default.post(name: .exeLauncherGamesChanged, object: nil)
+        }
+
+        statusMessage = "(game.name) is now in your Games Library and linked to bottle '(bottle.name)'."
     }
 
     private func deletePendingBottle() {
