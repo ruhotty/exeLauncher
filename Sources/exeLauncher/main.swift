@@ -946,7 +946,7 @@ struct LauncherView: View {
                         ProgressView().controlSize(.small)
                         Text("Preparing Steam…")
                     } else {
-                        Label(SteamManager.bottle == nil ? "Install Steam" : "Install / Repair Steam", systemImage: "steam")
+                        Label(SteamManager.bottle == nil ? "Install Steam" : "Open / Install Steam", systemImage: "steam")
                     }
                 }
                 .disabled(isInstallingSteam || WineRuntime.selectedAppURL == nil)
