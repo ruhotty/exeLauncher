@@ -113,7 +113,7 @@ enum WineRuntime {
 
     static func chooseApp() -> URL? {
         let panel = NSOpenPanel()
-        panel.title = "Select Wine Staging.app"
+        panel.title = "Select MetalSharp-Wine.app"
         panel.message = "Choose the complete Wine .app bundle."
         panel.prompt = "Select Wine"
         panel.canChooseFiles = true
