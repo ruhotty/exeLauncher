@@ -244,17 +244,27 @@ enum WineRuntimeInstaller {
     }
 
     private static func findWineApp(in directory: URL) -> URL? {
+        // MetalSharp's release ZIP contains the app bundle. Do not require
+        // wineboot to be discoverable before selecting it: newer bundles can
+        // place Wine's helper executables in different locations.
+        let directCandidates = [
+            directory.appendingPathComponent("MetalSharp-Wine.app", isDirectory: true)
+        ]
+        for candidate in directCandidates where
+            FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+        }
+
         guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else { return nil }
 
-        for case let url as URL in enumerator where url.pathExtension == "app" {
-            if WineRuntime.executable(named: "wine", in: url) != nil &&
-               WineRuntime.executable(named: "wineboot", in: url) != nil {
-                return url
-            }
+        for case let url as URL in enumerator where
+            url.pathExtension == "app" &&
+            url.lastPathComponent == "MetalSharp-Wine.app" {
+            return url
         }
         return nil
     }
