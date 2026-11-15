@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "exeLauncher",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS("15.0")],
     products: [
         .executable(name: "exeLauncher", targets: ["exeLauncher"])
     ],
