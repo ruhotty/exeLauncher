@@ -574,7 +574,10 @@ enum WinetricksInstaller {
             (try? fileManager.destinationOfSymbolicLink(atPath: stableCabextractURL.path)) != nil {
             try fileManager.removeItem(at: stableCabextractURL)
         }
-        try fileManager.createSymbolicLink(at: stableCabextractURL, withDestinationURL: cabextractURL)
+        // Copy the actual binary into the tools directory. Avoid another
+        // symlink layer because Winetricks checks it with "command -v".
+        try fileManager.copyItem(at: cabextractURL.resolvingSymlinksInPath(), to: stableCabextractURL)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stableCabextractURL.path)
 
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "WINEARCH")
@@ -582,10 +585,25 @@ enum WinetricksInstaller {
         environment["WINE"] = wine.path
         environment["WINELOADER"] = wine.path
         environment["WINEDEBUG"] = "-all"
-        environment["CABEXTRACT"] = stableCabextractURL.path
         let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        environment["PATH"] = toolsDirectory.path + ":" + cabextractURL.deletingLastPathComponent().path + ":" + existingPath
+        environment["PATH"] = toolsDirectory.path + ":" + existingPath
         process.environment = environment
+
+        // Test command lookup using the same PATH and shell Winetricks uses.
+        let pathCheck = Process()
+        pathCheck.executableURL = URL(fileURLWithPath: "/bin/bash")
+        pathCheck.arguments = ["-c", "command -v cabextract && cabextract --version"]
+        pathCheck.environment = environment
+        let pathOutput = Pipe()
+        pathCheck.standardOutput = pathOutput
+        pathCheck.standardError = pathOutput
+        try pathCheck.run()
+        let pathOutputData = pathOutput.fileHandleForReading.readDataToEndOfFile()
+        pathCheck.waitUntilExit()
+        guard pathCheck.terminationStatus == 0 else {
+            let details = String(data: pathOutputData, encoding: .utf8) ?? ""
+            throw DependencyError.cabextractNotFound(details.isEmpty ? stableCabextractURL.path : details)
+        }
 
         let output = Pipe()
         process.standardOutput = output
@@ -605,6 +623,7 @@ enum WinetricksInstaller {
         case wineNotFound
         case downloadFailed
         case cabextractNotExecutable(String)
+        case cabextractNotFound(String)
         case installationFailed(String)
 
         var errorDescription: String? {
@@ -615,6 +634,8 @@ enum WinetricksInstaller {
                 return "Could not download the official Winetricks script."
             case .cabextractNotExecutable(let path):
                 return "cabextract was not executable at the expected path: " + path
+            case .cabextractNotFound(let details):
+                return "exeLauncher could not resolve cabextract using the same PATH as Winetricks: " + details
             case .installationFailed(let details):
                 return details.isEmpty
                     ? "Winetricks could not install the common Windows dependencies. Check that cabextract is installed."
