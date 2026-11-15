@@ -567,50 +567,156 @@ struct BottlesView: View {
     @State private var showingError = false
     @State private var bottlePendingDeletion: Bottle?
 
-    private var runtimeReady: Bool { WineRuntime.wineExecutable != nil && WineRuntime.winebootExecutable != nil }
+    private var runtimeReady: Bool {
+        WineRuntime.wineExecutable != nil && WineRuntime.winebootExecutable != nil
+    }
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                Section("Wine runtime") {
-                    HStack {
-                        Image(systemName: runtimeReady ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(runtimeReady ? Color.green : Color.secondary)
-                        VStack(alignment: .leading) {
-                            Text(runtimeReady ? "Wine is ready" : "Wine not configured")
-                            Text(runtimeApp?.lastPathComponent ?? "No Wine app selected")
-                                .font(.caption).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                header
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 10) {
+                            Image(systemName: runtimeReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(runtimeReady ? Color.green : Color.orange)
+                                .font(.title2)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(runtimeReady ? "Wine is ready" : "Wine dependencies are missing")
+                                    .font(.headline)
+                                Text(runtimeApp?.lastPathComponent ?? "Install Wine Staging to create Windows environments.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+
+                        Text("Install Wine Staging 11.21. This package includes GStreamer, Wine Gecko and Wine Mono.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HStack(spacing: 10) {
+                            Button {
+                                installDependencies()
+                            } label: {
+                                if isInstallingDependencies {
+                                    ProgressView().controlSize(.small)
+                                    Text("Downloading dependencies…")
+                                } else if runtimeReady {
+                                    Label("Dependencies installed", systemImage: "checkmark")
+                                } else {
+                                    Label("Download Dependencies", systemImage: "arrow.down.circle")
+                                }
+                            }
+                            .disabled(isInstallingDependencies || runtimeReady)
+                            .exeLauncherGlassButton(prominent: true)
+
+                            Button("Select Wine manually…") {
+                                selectRuntime()
+                            }
+                            .disabled(isInstallingDependencies)
+                            .exeLauncherGlassButton()
+                        }
+
+                        if isInstallingDependencies {
+                            ProgressView()
+                                .progressViewStyle(.linear)
+                            Text("Downloading and unpacking Wine. This can take a few minutes.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let statusMessage {
+                            Text(statusMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
                         }
                     }
-                    Button("Install Dependencies") { installDependencies() }
-                        .disabled(isInstallingDependencies || runtimeReady)
-                    Button("Select Wine app…") { selectRuntime() }
+                    .padding(6)
                 }
-                Section("Your bottles") {
-                    if bottles.isEmpty {
-                        Text("No bottles yet").foregroundStyle(.secondary)
-                    }
-                    ForEach(bottles) { bottle in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(bottle.name)
-                            Text(bottle.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption).foregroundStyle(.secondary)
+
+                GroupBox("Create a bottle") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("A bottle is a separate Windows environment. Install each program in the bottle you want to use.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            TextField("Bottle name, for example Minecraft", text: $newBottleName)
+                                .textFieldStyle(.roundedBorder)
+                            Button {
+                                createBottle()
+                            } label: {
+                                if isCreating {
+                                    ProgressView().controlSize(.small)
+                                    Text("Creating…")
+                                } else {
+                                    Label("Create bottle", systemImage: "plus")
+                                }
+                            }
+                            .disabled(!runtimeReady || newBottleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
+                            .exeLauncherGlassButton(prominent: true)
                         }
-                        .contextMenu {
-                            Button("Show in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([bottle.directoryURL])
+                    }
+                    .padding(6)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Your bottles").font(.title2.bold())
+                        Spacer()
+                        Text("\(bottles.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if bottles.isEmpty {
+                        ContentUnavailableView(
+                            "No bottles yet",
+                            systemImage: "shippingbox",
+                            description: Text("Install the dependencies above, then create your first bottle.")
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    } else {
+                        ForEach(bottles) { bottle in
+                            HStack {
+                                Image(systemName: "shippingbox")
+                                    .font(.title2)
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(bottle.name).font(.headline)
+                                    Text(bottle.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([bottle.directoryURL])
+                                } label: {
+                                    Image(systemName: "folder")
+                                }
+                                .help("Show in Finder")
+                                .buttonStyle(.borderless)
+                                Button(role: .destructive) {
+                                    bottlePendingDeletion = bottle
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .help("Delete bottle")
+                                .buttonStyle(.borderless)
                             }
-                            Button("Delete Bottle", role: .destructive) {
-                                bottlePendingDeletion = bottle
-                            }
+                            .padding(12)
+                            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
                         }
                     }
                 }
             }
-            .listStyle(.sidebar)
-            .navigationTitle("Bottles")
-        } detail: {
-            bottleHome
+            .padding(28)
+            .frame(maxWidth: 820, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .alert("Something went wrong", isPresented: $showingError) {
             Button("OK", role: .cancel) { }
@@ -630,85 +736,25 @@ struct BottlesView: View {
         }
     }
 
-    private var bottleHome: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Image(systemName: "shippingbox.fill")
-                .font(.system(size: 48)).foregroundStyle(.secondary)
-            Text("Wine bottles").font(.largeTitle.bold())
-            Text("Each bottle is its own Windows environment. Programs installed in one bottle stay separate from the others.")
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Bottles")
+                .font(.largeTitle.bold())
+            Text("Manage separate Windows environments for your games and apps.")
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            GroupBox("Wine runtime") {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(runtimeReady ? "Ready to create bottles" : "Install Wine to continue")
-                        Spacer()
-                        Circle().fill(runtimeReady ? .green : .orange).frame(width: 9, height: 9)
-                    }
-                    Text("Wine Staging 11.21. GStreamer.framework is included in this release.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        Button {
-                            installDependencies()
-                        } label: {
-                            if isInstallingDependencies {
-                                ProgressView().controlSize(.small)
-                                Text("Installing dependencies…")
-                            } else {
-                                Label(runtimeReady ? "Dependencies installed" : "Install Dependencies", systemImage: "arrow.down.circle")
-                            }
-                        }
-                        .disabled(isInstallingDependencies || runtimeReady)
-                        .exeLauncherGlassButton(prominent: true)
-                        Button("Select Wine manually…") { selectRuntime() }
-                            .exeLauncherGlassButton()
-                    }
-                    if isInstallingDependencies {
-                        Text("Downloading Wine and unpacking the runtime. This can take a while.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }.padding(4)
-            }
-
-            GroupBox("Create a bottle") {
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("Bottle name, for example Minecraft", text: $newBottleName)
-                        .textFieldStyle(.roundedBorder)
-                    Button {
-                        createBottle()
-                    } label: {
-                        if isCreating {
-                            ProgressView().controlSize(.small)
-                            Text("Creating Windows environment…")
-                        } else {
-                            Label("Create bottle", systemImage: "plus")
-                        }
-                    }
-                    .disabled(!runtimeReady || newBottleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
-                    .exeLauncherGlassButton(prominent: true)
-                    if let statusMessage {
-                        Text(statusMessage).font(.caption).foregroundStyle(.secondary)
-                    }
-                }.padding(4)
-            }
-
-            Text("\(bottles.count) bottles")
-                .font(.caption).foregroundStyle(.tertiary)
-            Spacer()
         }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func installDependencies() {
+        guard !runtimeReady else { return }
         isInstallingDependencies = true
-        statusMessage = "Downloading Wine Staging and preparing its bundled dependencies."
+        statusMessage = "Connecting to GitHub and downloading Wine Staging."
         Task {
             do {
                 let installedApp = try await WineRuntimeInstaller.install()
                 runtimeApp = installedApp
-                statusMessage = "Wine Staging \(WineRuntime.version) and GStreamer are installed."
+                statusMessage = "Wine Staging \(WineRuntime.version) and its bundled dependencies are installed."
             } catch {
                 showError(error.localizedDescription)
                 statusMessage = nil
@@ -721,7 +767,7 @@ struct BottlesView: View {
         if let selected = WineRuntime.chooseApp() {
             runtimeApp = selected
             if !runtimeReady {
-                showError("I couldn't find the Wine and wineboot executables in that app. Select the Wine Staging .app bundle, not the downloaded archive.")
+                showError("I couldn't find the Wine and wineboot executables in that app. Select the complete Wine .app bundle.")
             }
         }
     }
@@ -753,7 +799,9 @@ struct BottlesView: View {
             try BottleStore.delete(bottle)
             bottles.removeAll { $0.id == bottle.id }
             try BottleStore.save(bottles)
-        } catch { showError(error.localizedDescription) }
+        } catch {
+            showError(error.localizedDescription)
+        }
         bottlePendingDeletion = nil
     }
 
