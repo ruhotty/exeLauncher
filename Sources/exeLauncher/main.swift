@@ -99,6 +99,26 @@ enum SteamInstaller {
     }
 }
 
+// Use native Liquid Glass on macOS 26 and newer, with a standard fallback on older systems.
+extension View {
+    @ViewBuilder
+    func exeLauncherGlassButton(prominent: Bool = false) -> some View {
+        if #available(macOS 26.0, *) {
+            if prominent {
+                self.buttonStyle(.glassProminent)
+            } else {
+                self.buttonStyle(.glass)
+            }
+        } else {
+            if prominent {
+                self.buttonStyle(.borderedProminent)
+            } else {
+                self.buttonStyle(.bordered)
+            }
+        }
+    }
+}
+
 struct LauncherView: View {
     @State private var games = GameStore.load()
     @State private var selectedGameID: UUID?
@@ -190,7 +210,7 @@ struct LauncherView: View {
                 } label: {
                     Label("Add Windows game", systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent)
+                .exeLauncherGlassButton(prominent: true)
 
                 Button {
                     Task { await downloadSteamInstaller() }
@@ -204,7 +224,7 @@ struct LauncherView: View {
                     }
                 }
                 .disabled(isDownloadingSteam)
-                .buttonStyle(.bordered)
+                .exeLauncherGlassButton()
             }
 
             if let steamInstallerPath {
@@ -250,7 +270,7 @@ struct LauncherView: View {
                 Label("Play", systemImage: "play.fill")
                     .frame(minWidth: 120)
             }
-            .buttonStyle(.borderedProminent)
+            .exeLauncherGlassButton(prominent: true)
             .disabled(true)
             .help("Game launching will be enabled after Wine integration.")
 
