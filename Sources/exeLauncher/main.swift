@@ -1507,6 +1507,7 @@ struct BottlesView: View {
     @State private var errorMessage: String?
     @State private var showingError = false
     @State private var bottlePendingDeletion: Bottle?
+    @State private var isInstallingEXE = false
 
     private var runtimeReady: Bool {
         WineRuntime.selectedAppURL?.lastPathComponent == "MetalSharp-Wine.app" &&
@@ -1637,6 +1638,13 @@ struct BottlesView: View {
                                 }
                                 Spacer()
                                 Button {
+                                    installEXE(in: bottle)
+                                } label: {
+                                    Label("Install EXE", systemImage: "square.and.arrow.down")
+                                }
+                                .disabled(!runtimeReady || isInstallingEXE)
+                                .exeLauncherGlassButton()
+                                Button {
                                     NSWorkspace.shared.activateFileViewerSelecting([bottle.directoryURL])
                                 } label: {
                                     Image(systemName: "folder")
@@ -1733,6 +1741,71 @@ struct BottlesView: View {
                 statusMessage = nil
             }
             isCreating = false
+        }
+    }
+
+    private func installEXE(in bottle: Bottle) {
+        guard let runtimeApp = WineRuntime.selectedAppURL,
+              let wine = WineRuntime.executable(named: "wine", in: runtimeApp) else {
+            showError("Install MetalSharp Wine in the Bottles tab first.")
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Windows installer"
+        panel.message = "Select the .exe installer to run in \(bottle.name)."
+        panel.prompt = "Install"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "exe") ?? .data]
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        guard selectedURL.pathExtension.lowercased() == "exe" else {
+            showError("Please select a Windows .exe installer.")
+            return
+        }
+
+        isInstallingEXE = true
+        statusMessage = "Preparing installer for bottle '\(bottle.name)'."
+
+        Task {
+            do {
+                let installerURL = try await Task.detached(priority: .userInitiated) {
+                    let installerDirectory = GameStore.directory
+                        .appendingPathComponent("Installers", isDirectory: true)
+                    try GameStore.prepareWritableDirectory(GameStore.directory)
+                    try GameStore.prepareWritableDirectory(installerDirectory)
+                    let destination = installerDirectory
+                        .appendingPathComponent(UUID().uuidString + "-" + selectedURL.lastPathComponent)
+                    let hasAccess = selectedURL.startAccessingSecurityScopedResource()
+                    defer { if hasAccess { selectedURL.stopAccessingSecurityScopedResource() } }
+                    try FileManager.default.copyItem(at: selectedURL, to: destination)
+                    return destination
+                }.value
+
+                let process = Process()
+                process.executableURL = wine
+                process.arguments = [installerURL.path]
+                process.currentDirectoryURL = installerURL.deletingLastPathComponent()
+
+                var environment = ProcessInfo.processInfo.environment
+                environment.removeValue(forKey: "WINEARCH")
+                environment["WINEPREFIX"] = bottle.directoryURL.path
+                environment["WINE"] = wine.path
+                environment["WINELOADER"] = wine.path
+                environment["WINEDEBUG"] = "-all"
+                process.environment = environment
+
+                ExeLauncherProcessRegistry.registerWinePrefix(prefix: bottle.directoryURL, runtimeApp: runtimeApp)
+                try process.run()
+                ExeLauncherProcessRegistry.register(process)
+                statusMessage = "Installer started in bottle '\(bottle.name)'. Complete the setup window."
+            } catch {
+                showError("Could not start the installer: " + error.localizedDescription)
+                statusMessage = nil
+            }
+            isInstallingEXE = false
         }
     }
 
