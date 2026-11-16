@@ -90,5 +90,4 @@ swift run
 Wine does not run every Windows program. Games with kernel-level anti-cheat often do not work. Graphics compatibility depends on the game, Wine build, macOS version, and translation layer.
 
 ## License
-
-License not selected yet. Wine is a separate upstream project with its own license and notices.
+This project is licensed under the GPL-3.0 license.
